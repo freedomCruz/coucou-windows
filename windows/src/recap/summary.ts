@@ -109,6 +109,8 @@ const AGENT_NAMES: Record<string, string> = {
   agent_opencode: "OpenCode",
   agent_amp: "Amp",
   agent_hermes: "Hermes",
+  agent_pi: "Pi",
+  agent_orca: "ORCA",
   "agent_claude-desktop": "Claude Desktop",
 };
 

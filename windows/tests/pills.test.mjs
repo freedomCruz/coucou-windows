@@ -25,6 +25,8 @@ test("the catalog holds the Mac's pills, in the Mac's order, with the Mac's valu
     ["agent_opencode", "OpenCode", "#4ADE80", "agent", "Agent"],
     ["agent_amp", "Amp", "#F59E0B", "agent", "Agent"],
     ["agent_hermes", "Hermes", "#C084FC", "agent", "Agent"],
+    ["agent_pi", "Pi", "#EC4899", "agent", "Agent"],
+    ["agent_orca", "ORCA", "#06B6D4", "agent", "Agent"],
     ["agent_claude-desktop", "Claude Desktop", "#D97757", "agent", "Agent"],
     ["ai_anthropic", "Anthropic", "#E07950", "ai", "Chat"],
     ["ai_google", "Google AI", "#4285F4", "ai", "Chat"],
