@@ -69,24 +69,32 @@ mod unix;
 #[cfg(target_os = "linux")]
 use unix::connect;
 
-/// What the command line says: `--agent <name>` and the event name.
+/// What the command line says: `--agent <name>`, `--wsl <distro>` and the event name.
 struct Args {
     agent: String,
     event: String,
+    distro: Option<String>,
 }
 
 fn args() -> Args {
     let mut agent = String::new();
     let mut event = String::new();
+    let mut distro = None;
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         if arg == "--agent" {
             agent = it.next().unwrap_or_default();
+        } else if arg == "--wsl" {
+            distro = it.next();
         } else if event.is_empty() {
             event = arg;
         }
     }
-    Args { agent, event }
+    // Also support WSL distro from WSL_DISTRO_NAME environment variable if not passed via CLI
+    if distro.is_none() {
+        distro = std::env::var("WSL_DISTRO_NAME").ok().filter(|d| !d.is_empty());
+    }
+    Args { agent, event, distro }
 }
 
 /// One event, ready to forward.
@@ -185,6 +193,17 @@ fn prepare(raw: &[u8], args: &Args, env: &dyn Fn(&str) -> Option<String>, cwd: &
         map.insert("cwd".into(), Value::String(cwd.to_string()));
     }
 
+    // From WSL: `/home/me/proj` means nothing to Windows. `\\wsl$\<distro>\…`
+    // is a folder Explorer and VS Code can open, and its last component is
+    // still the project name.
+    if let Some(distro) = &args.distro {
+        let unc = map.get("cwd").and_then(Value::as_str).and_then(|c| wsl_unc(distro, c));
+        if let Some(unc) = unc {
+            map.insert("cwd".into(), Value::String(unc));
+        }
+        map.insert("wsl_distro".into(), Value::String(distro.clone()));
+    }
+
     add_terminal_context(map, env);
 
     // The processes we run under, for "Open terminal": the app finds the
@@ -254,6 +273,13 @@ fn term_editor(env: &dyn Fn(&str) -> Option<String>) -> Option<&'static str> {
     let helper = env("VSCODE_GIT_ASKPASS_NODE").unwrap_or_default();
     let exe = helper.rsplit(['/', '\\']).next().unwrap_or_default().to_ascii_lowercase();
     exe.starts_with("cursor").then_some("cursor")
+}
+
+/// `/home/me/proj` in `Ubuntu` → `\\wsl$\Ubuntu\home\me\proj`. None for a path
+/// that is not a Linux one.
+fn wsl_unc(distro: &str, cwd: &str) -> Option<String> {
+    cwd.starts_with('/')
+        .then(|| format!(r"\\wsl$\{distro}{}", cwd.replace('/', "\\")))
 }
 
 /// Caps the strings of a payload: every field to MAX_FIELD_LEN, except the edit
@@ -380,7 +406,7 @@ mod tests {
     use super::*;
 
     fn run(raw: &str, agent: &str, event: &str) -> (Value, Event) {
-        let args = Args { agent: agent.into(), event: event.into() };
+        let args = Args { agent: agent.into(), event: event.into(), distro: None };
         let ev = prepare(raw.as_bytes(), &args, &|_| None, "/home/me/here").expect("forwarded");
         let v = serde_json::from_str(ev.line.trim_end()).unwrap();
         (v, ev)
@@ -418,6 +444,12 @@ mod tests {
         );
         assert_eq!(term_editor(&env_of(&[("CURSOR_TRACE_ID", "")])), None);
         assert_eq!(term_editor(&env_of(&[("TERM_PROGRAM", "vscode")])), None);
+    }
+
+    #[test]
+    fn a_wsl_cwd_becomes_a_path_windows_can_open() {
+        assert_eq!(wsl_unc("Ubuntu", "/home/me/proj").unwrap(), r"\\wsl$\Ubuntu\home\me\proj");
+        assert!(wsl_unc("Ubuntu", r"C:\work").is_none());
     }
 
     #[test]
@@ -471,7 +503,7 @@ mod tests {
 
     #[test]
     fn what_cannot_be_read_is_not_forwarded() {
-        let args = Args { agent: "copilot".into(), event: "preToolUse".into() };
+        let args = Args { agent: "copilot".into(), event: "preToolUse".into(), distro: None };
         for raw in ["", "not json", "[1,2]"] {
             assert!(prepare(raw.as_bytes(), &args, &|_| None, "/").is_none());
         }
