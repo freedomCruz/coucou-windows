@@ -12,7 +12,14 @@ set -euo pipefail
 SCENARIO="${1:-all}"
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 DISTRO="${WSL_DISTRO_NAME:-Ubuntu}"
-WIN_USER="${COUCOU_WIN_USER:-$(ls /mnt/c/Users | grep -vxE 'Public|Default|Default User|All Users|desktop.ini' | head -1)}"
+# The Windows user that has Coucou's relay (COUCOU_WIN_USER picks one).
+WIN_USER="${COUCOU_WIN_USER:-}"
+if [ -z "$WIN_USER" ]; then
+  for d in /mnt/c/Users/*/; do
+    u="$(basename "$d")"
+    if [ -x "/mnt/c/Users/$u/AppData/Local/Coucou/bin/coucou-hook.exe" ]; then WIN_USER="$u"; break; fi
+  done
+fi
 HOOK="${COUCOU_HOOK:-/mnt/c/Users/$WIN_USER/AppData/Local/Coucou/bin/coucou-hook.exe}"
 [ -x "$HOOK" ] || { echo "Relay not found: $HOOK" >&2; exit 1; }
 
@@ -26,6 +33,18 @@ send() {
 }
 
 say() { printf '\n\033[1;36m▶ %s\033[0m\n' "$*"; }
+LOG="/mnt/c/Users/$WIN_USER/AppData/Local/Coucou/coucou.log"
+# Waits until the island has drawn <view> for <pill> (its "view" log line).
+wait_for_view() {
+  local view="$1" pill="$2" limit="$3" from
+  from=$(wc -l < "$LOG")
+  printf '  waiting for the %s view of %s (up to %ss)…' "$view" "$pill" "$limit"
+  for ((i = 0; i < limit; i++)); do
+    if tail -n +"$((from + 1))" "$LOG" | grep -aq -- "-> $view focus=$pill "; then echo " seen"; return 0; fi
+    sleep 1
+  done
+  echo " not seen, going on"
+}
 wait_for() { local s="$1"; shift; printf '  %s ' "$*"; for ((i = s; i > 0; i--)); do printf '%s ' "$i"; sleep 1; done; echo; }
 
 # A turn: a prompt, a read, an edit (diff and code view) and a command.
@@ -52,7 +71,8 @@ two_claude() {
   turn "" sim-alpha Edit Bash "$CLAUDE_EDIT"
   turn "" sim-beta Edit Bash "$CLAUDE_EDIT"
   say "NOW: put sim-alpha's pill in front and click its card to open the code view"
-  wait_for 12 "sim-alpha stops in"
+  wait_for_view code "integration_claude~sim-alpha" 120
+  wait_for 2 "sim-alpha stops in"
   send "" sim-alpha Stop '"last_assistant_message":"sim-alpha finished its turn."'
   say "Expected: the 'finished' card (Open terminal / OK) over the code view"
   wait_for 8 "sim-beta stops in"
