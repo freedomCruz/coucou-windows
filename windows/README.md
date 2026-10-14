@@ -59,7 +59,7 @@ You can also [build it yourself](#build-it-yourself).
 | On the desktop: click / right-click / double-click Mochi | Poke him / the wardrobe / he flies home. Drag him to move him |
 | Drag a file onto the island | Mochi turns into a box, swallows it, then offers to answer questions about it |
 | Click a file in the session ticker | Its diff opens in the island; ↗ opens the file in VS Code, ‹ or `Esc` goes back |
-| Click a Claude Code session's card (once it has edited a file or run a command) | The code view: the turn's phases, the last edit in place with a few lines of the file around it, the last command and its last lines of output; ‹ goes back |
+| Click a Claude Code, Pi, ORCA or OpenCode session's card (once it has edited a file or run a command) | The code view: the turn's phases, the last edit in place with a few lines of the file around it, the last command and its last lines of output; ‹ goes back |
 | `Esc` | Closes the island |
 | Put a file named like one of Mochi's sounds (`finish.wav`, `approval.mp3`, `greet.m4a`…) in the sounds folder | It replaces that sound after **Settings → General → Reload sounds**. **Open sounds folder** shows the folder: `~/.config/coucou/sounds` on Linux, `%APPDATA%\Coucou\sounds` on Windows |
 | Tray icon | Open, Weekly recap, Wardrobe…, Settings…, Pause, Quit |
@@ -132,6 +132,9 @@ answer on one line, still, until the next prompt.
 from a regular file inside the session's folder, up to 2 MB; a session on another
 machine shows the edit alone. Of what a command printed, the relay forwards its
 last three lines and nothing else. Nothing opens by itself.
+Pi's and OpenCode's tools reach it under Claude Code's names: the relay renames
+them (`hook/src/normalize.rs`), and from WSL it turns a file's path into a
+`\\wsl$\…` path Windows can read.
 
 ## Your pills
 

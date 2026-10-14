@@ -18,6 +18,8 @@ import { N_, t } from "../i18n/i18n";
 import { beginTurn, dropCode, endTurn, toolFinished, toolStarted, type CodeSource } from "../views/session";
 
 const CLAUDE_ID = "integration_claude";
+/** External agents with a code view: their tools reach us under Claude Code's names. */
+const CODE_VIEW_AGENTS = new Set(["pi", "orca", "opencode"]);
 const CURSOR_ID = "agent_cursor";
 
 /**
@@ -451,10 +453,11 @@ function handleHook(island: Island, payload: HookPayload) {
   // pill it has just made).
   if (State.tasks.some((x) => x.id === agentId)) armQuietTimer(agentId, sessionId);
 
-  // The code view's data: Claude Code's own pills only. Opening it is the user's click.
-  const code: CodeSource | null = isExternalAgent
-    ? null
-    : { sessionId, cwd, project: projectName, remote: !!payload.coucou_remote };
+  // The code view's data: Claude Code's pills, and the agents whose tools the
+  // relay gives Claude Code's names (normalize.rs). Opening it is the user's click.
+  const code: CodeSource | null = isClaudeCode || CODE_VIEW_AGENTS.has(validAgent!)
+    ? { sessionId, cwd, project: projectName, remote: !!payload.coucou_remote }
+    : null;
   /** Leaves the code view when what it shows of this pill is gone. */
   const leaveCode = () => {
     if (focused && State.view === "code") island.setView(State.defaultView());

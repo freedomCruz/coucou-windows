@@ -171,10 +171,35 @@ test("another session gets its own pill and code view, and SessionEnd forgets it
   assert.deepEqual(asked, ["setView:overview"]);
 });
 
-test("external agents get no code view", () => {
+test("Pi, ORCA and OpenCode get a code view; other external agents do not", () => {
+  // The relay gives their tools Claude Code's names and fields (normalize.rs).
+  pre("MultiEdit", { file_path: EDIT.file_path, edits: [{ old_string: EDIT.old_string, new_string: EDIT.new_string }] },
+    { coucou_agent: "pi", session_id: "p1" });
+  const pi = codeFor("agent_pi");
+  assert.equal(pi.sessionId, "p1");
+  assert.equal(pi.edit.kind, "edit");
+  assert.equal(pi.edit.added, EDIT.new_string);
+  assert.equal(hasCode("agent_pi"), true);
+
+  State.settings.mainPill = "agent_orca";
+  State.loadIntegrationTasks();
+  pre("Write", { file_path: `${ROOT}/README.md`, content: "# shop" }, { coucou_agent: "orca", session_id: "o1" });
+  assert.equal(codeFor("agent_orca").edit.kind, "write");
+
+  pre("Bash", { command: "npm test" }, { coucou_agent: "opencode", session_id: "c1" });
+  post("Bash", { command: "npm test" }, { coucou_agent: "opencode", session_id: "c1", tool_tail: ["ok"] });
+  assert.equal(codeFor("agent_opencode").command.status, "ok");
+
   pre("Edit", EDIT, { coucou_agent: "gemini" });
   assert.equal(codeFor("agent_gemini"), null);
   assert.equal(hasCode(CLAUDE), false);
+});
+
+test("a Pi edit is recorded for the live diff, as Claude Code's", () => {
+  const multi = { file_path: EDIT.file_path, edits: [{ old_string: "a", new_string: "b" }] };
+  pre("MultiEdit", multi, { coucou_agent: "pi", session_id: "p1" });
+  post("MultiEdit", multi, { coucou_agent: "pi", session_id: "p1" });
+  assert.equal(State.sessionDiffs.get("agent_pi").length, 1);
 });
 
 // ── The editor pane ───────────────────────────────────────────────────────────
