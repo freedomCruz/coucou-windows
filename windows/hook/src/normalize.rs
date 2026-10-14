@@ -146,15 +146,40 @@ const INPUT_ALIASES: &[(&str, &str)] = &[
     ("newString", "new_string"),
 ];
 
+/// An MCP server's own bash / edit / write / read (`mcp__<server>__<name>`),
+/// for any agent, when its input has that tool's fields: a command for bash, a
+/// file path for the others (and edits or content for edit and write). An MCP
+/// tool of the same name that means something else keeps its name.
+fn mcp_tool<'a>(tool: &'a str, input: Option<&Value>) -> Option<&'a str> {
+    let rest = tool.strip_prefix("mcp__")?;
+    let (_, name) = rest.rsplit_once("__")?;
+    let input = input?.as_object()?;
+    let has = |k: &str| input.get(k).is_some_and(|v| !v.is_null());
+    let file = has("path") || has("file_path") || has("filePath");
+    let fits = match name {
+        "bash" => has("command"),
+        "edit" => file && (has("edits") || has("oldText") || has("old_string") || has("oldString")),
+        "write" => file && has("content"),
+        "read" => file,
+        _ => false,
+    };
+    fits.then_some(name)
+}
+
 /// Pi's and OpenCode's tools under Claude Code's names and fields, so the live
 /// diff and the code view read them as they read Claude Code's. Pi's `edit`
 /// takes several replacements (`edits[].oldText / newText`): a MultiEdit.
 pub fn canonical_tool(map: &mut Map<String, Value>) {
     let agent = map.get("coucou_agent").and_then(Value::as_str).unwrap_or_default();
-    if !CANONICAL_AGENTS.contains(&agent) {
-        return;
-    }
     let tool = map.get("tool_name").and_then(Value::as_str).unwrap_or_default();
+    let tool = if CANONICAL_AGENTS.contains(&agent) {
+        tool.to_string()
+    } else {
+        match mcp_tool(tool, map.get("tool_input")) {
+            Some(t) => t.to_string(),
+            None => return,
+        }
+    };
     let Some(&(_, mut name)) = TOOL_NAMES.iter().find(|(from, _)| *from == tool) else { return };
     if let Some(Value::Object(input)) = map.get_mut("tool_input") {
         for (from, to) in INPUT_ALIASES {
@@ -368,5 +393,46 @@ mod tests {
         let mut m = before.clone();
         canonical_tool(&mut m);
         assert_eq!(m, before);
+    }
+
+    #[test]
+    fn mcp_file_and_shell_tools_read_as_claude_codes_own() {
+        // Any session (here Claude Code, no tag): an MCP server's bash / edit /
+        // write / read, with the fields of that tool.
+        let mut m = obj(json!({ "tool_name": "mcp__custom-tools__bash", "tool_input": { "command": "ls" } }));
+        canonical_tool(&mut m);
+        assert_eq!(m["tool_name"], "Bash");
+        let mut m = obj(json!({ "tool_name": "mcp__custom-tools__edit",
+            "tool_input": { "path": "/w/a.ts", "edits": [{ "oldText": "a", "newText": "b" }] } }));
+        canonical_tool(&mut m);
+        assert_eq!(m["tool_name"], "MultiEdit");
+        assert_eq!(m["tool_input"]["file_path"], "/w/a.ts");
+        assert_eq!(m["tool_input"]["edits"], json!([{ "old_string": "a", "new_string": "b" }]));
+        let mut m = obj(json!({ "tool_name": "mcp__fs__write", "tool_input": { "path": "/w/b.ts", "content": "x" } }));
+        canonical_tool(&mut m);
+        assert_eq!(m["tool_name"], "Write");
+        let mut m = obj(json!({ "tool_name": "mcp__fs__read", "tool_input": { "path": "/w/b.ts" } }));
+        canonical_tool(&mut m);
+        assert_eq!(m["tool_name"], "Read");
+    }
+
+    #[test]
+    fn mcp_tools_without_those_fields_keep_their_names() {
+        for (tool, input) in [
+            // Same name, other meaning: no file, no command.
+            ("mcp__github__edit", json!({ "issue": 3, "body": "x" })),
+            ("mcp__db__read", json!({ "table": "users" })),
+            ("mcp__shell__bash", json!({ "script": "ls" })),
+            // Not one of the four.
+            ("mcp__custom-tools__grep", json!({ "pattern": "x", "path": "." })),
+            ("mcp__custom-tools__mem_save", json!({ "title": "t" })),
+            // Not an MCP name.
+            ("custom__bash", json!({ "command": "ls" })),
+        ] {
+            let before = obj(json!({ "tool_name": tool, "tool_input": input }));
+            let mut m = before.clone();
+            canonical_tool(&mut m);
+            assert_eq!(m, before, "{tool}");
+        }
     }
 }
