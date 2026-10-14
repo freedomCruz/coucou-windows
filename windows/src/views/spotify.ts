@@ -2,8 +2,8 @@
 // (SpotifyViews.swift) and the shared now-playing pieces (NowPlayingViews.swift
 // and MusicControlButton). Sizes, colours and wording are the Mac's.
 //
-// What they show comes from src-tauri/src/spotify.rs (Linux, MPRIS) through
-// island/spotify.ts. A click changes the page's copy at once and Spotify
+// What they show comes from src-tauri/src/spotify.rs (MPRIS on Linux, the
+// media session on Windows) through island/spotify.ts. A click changes the page's copy at once and Spotify
 // confirms it, as the Mac's controller does.
 
 import { h, svg, clear, dot } from "./dom";
@@ -11,7 +11,8 @@ import { ICONS } from "./icons";
 import { Bridge } from "../core/bridge";
 import { State, type AgentTask } from "../core/state";
 import {
-  SPOTIFY_GREEN, SPOTIFY_ID, Spotify, currentArtwork, formatTime, isAd, spotifyPosition, volumeLevel, withPlaying,
+  SPOTIFY_GREEN, SPOTIFY_ID, Spotify, currentArtwork, formatTime, hasVolume, isAd, spotifyPosition, volumeLevel,
+  withPlaying,
   type SpotifyTrack,
 } from "../core/spotify";
 import { createMiniBot } from "../mochi/minibots";
@@ -393,6 +394,8 @@ export function buildSpotifyCard(): SpotifyCardHost {
     }
     play.title = s.playing ? t("Pause") : t("Play");
 
+    // Windows gives no volume to show or set: the row ends at the buttons.
+    volumeBox.style.display = hasVolume(State.os) ? "" : "none";
     const level = volumeLevel(s.volume);
     if (level !== volIconLevel) {
       volIconLevel = level;

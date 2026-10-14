@@ -433,8 +433,20 @@ own window.
   the island, and reopened by clicking the island, Open in the tray or **Go to
   alert**.
 - Apple Music, the one pill from the Mac catalog with nothing behind it here,
-  is left out. Spotify is on Linux only (see [Linux](#linux)): Windows has
-  nothing to read it from yet.
+  is left out.
+- **Spotify** (Settings → Integrations) is read from Windows' own media
+  sessions, the ones behind the volume flyout: nothing to sign in to, no key,
+  and nothing fetched — the cover is the one Windows already holds. The pill
+  shows the track and plays, pauses or skips on hover; the card has the cover,
+  the progress bar (drag to seek), shuffle, previous, next and repeat, and
+  Mochi dances while it plays. Nothing is polled: one thread sleeps until
+  Spotify's session says something changed, and ends when the pill is turned
+  off. There is no volume slider, because a media session has no volume. An
+  ad is recognised by its title alone (a media session carries no track id),
+  so one Spotify names differently shows as an ordinary track. **Open
+  Spotify** starts the desktop app or the Microsoft Store one; without
+  either, **Get Spotify** opens its download page. Windows 10 1809 or later.
+  On Linux it is read over MPRIS (see [Linux](#linux)).
 - Not in this version: sending a dropped file by email and dragging Mochi onto
   a window to attach it as context. On the Mac, email goes through Resend or
   Apple Mail's scripting; neither has a safe equivalent that attaches a file
@@ -497,8 +509,7 @@ own window.
   without a restart (the Mac's **Restart Coucou** isn't needed). Arabic turns
   the island's text right to left but not its layout: Mochi and the pills keep
   their sides.
-- Mochi on the desktop dances only on Linux, to Spotify; on Windows there is
-  no music integration to dance to yet. While he dances he stays awake (the
+- Mochi on the desktop dances to Spotify, and stays awake while he does (the
   Mac lets him doze off mid-dance). Dropping him on a window doesn't attach it
   to the chat. While he
   sleeps, the transparent square around him (120 px) takes the first mouse

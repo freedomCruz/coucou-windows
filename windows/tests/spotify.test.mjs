@@ -1,14 +1,15 @@
-// The Spotify pill (Linux) and Mochi's dance: the page's rules in
+// The Spotify pill and Mochi's dance: the page's rules in
 // src/core/spotify.ts, the dance in src/mochi/engine.ts, the report handling in
-// src/island/spotify.ts and the views in src/views/spotify.ts. The MPRIS side —
-// metadata, position, the bus itself — is tested in src-tauri/src/spotify.rs.
+// src/island/spotify.ts and the views in src/views/spotify.ts. What reads
+// Spotify — MPRIS on Linux, the media session on Windows — is tested in
+// src-tauri/src/spotify.rs.
 
 import { beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { emit, sent } from "./tauri.mjs";
 import { installFakeDom } from "./fakedom.mjs";
 import {
-  IDLE_SPOTIFY, SPOTIFY_ID, Spotify, currentArtwork, desktopDances, formatTime, isAd, islandDances,
+  IDLE_SPOTIFY, SPOTIFY_ID, Spotify, currentArtwork, desktopDances, formatTime, hasVolume, isAd, islandDances,
   musicPlaying, spotifyPosition, volumeLevel, withPlaying,
 } from "../src/core/spotify.ts";
 import { BotEngine, danceTransform, stepDanceLevel } from "../src/mochi/engine.ts";
@@ -283,6 +284,29 @@ test("the playing card: title, artist · album, times, and the controls", () => 
   Spotify.state = playing({ track: track({ id: "spotify:ad:9", title: "x", artist: "", album: "" }) });
   card.sync();
   assert.ok(card.el.textContent.includes("Advertisement"));
+});
+
+test("Windows: the pill is declared, Mochi dances, and the card has no volume", () => {
+  State.os = "windows";
+  State.loadIntegrationTasks();
+  assert.ok(spotifyTask(), "the pill is there on Windows");
+  // A track as the media session gives it: an id and a cover key made from the title.
+  const id = "spotify:windows:keshibeside youbeside you";
+  emit("spotify", playing({ track: track({ id, title: "beside you", artist: "keshi", album: "beside you", artUrl: id }) }));
+  assert.ok(State.spotifyPlaying);
+  assert.equal(island.reveals, 1);
+  assert.equal(spotifyTask().name, "beside you");
+  emit("spotify-artwork", { artUrl: id, dataUrl: "data:image/jpeg;base64,AA" });
+  assert.equal(currentArtwork(), "data:image/jpeg;base64,AA");
+
+  assert.ok(hasVolume("linux") && !hasVolume("windows"));
+  const card = buildSpotifyCard();
+  card.sync();
+  assert.equal(card.el.querySelector("np-volume").style.display, "none");
+  assert.equal(card.el.querySelector("np-buttons").children.length, 5, "the other controls stay");
+  State.os = "linux";
+  card.sync();
+  assert.equal(card.el.querySelector("np-volume").style.display, "");
 });
 
 test("the pill shows play/pause and next on hover, only with a track", () => {

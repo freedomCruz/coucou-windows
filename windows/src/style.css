@@ -2353,7 +2353,10 @@ input[type="range"]::-webkit-slider-thumb {
    SpotifyPill, MusicControlButton and SpotifyCardView (SpotifyViews.swift,
    NowPlayingViews.swift): sizes and colours are the Mac's. */
 
+/* A track's title is longer than a pill's name: it keeps clear of the mini
+   Mochi, as on the Mac (34 leading, 10 trailing). */
 .np-pill .lbl {
+  padding: 0 10px 0 34px;
   transition: padding 0.2s cubic-bezier(0.3, 1.2, 0.4, 1);
 }
 

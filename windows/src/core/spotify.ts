@@ -1,25 +1,24 @@
-// The Spotify pill on the page: what src-tauri/src/spotify.rs reports (Linux,
-// through MPRIS), and the pure rules the views and Mochi follow — ports of
-// SpotifyController.swift, NowPlayingViews.swift and the Mac's dance rules
-// (BotCanvasView, DesktopMochi.swift).
-//
-// Windows has no music source yet: nothing ever reports a track there, so
-// nothing plays and Mochi never dances, through the same code.
+// The Spotify pill on the page: what src-tauri/src/spotify.rs reports (MPRIS
+// on Linux, Spotify's media session on Windows), and the pure rules the views
+// and Mochi follow — ports of SpotifyController.swift, NowPlayingViews.swift
+// and the Mac's dance rules (BotCanvasView, DesktopMochi.swift).
 
 import type { BotStateName, IslandMode, IslandViewName } from "./layout";
+import type { HostOs } from "./pills";
 
 export const SPOTIFY_ID = "integration_spotify";
 /** SpotifyController.green. */
 export const SPOTIFY_GREEN = "#1DB954";
 
 export interface SpotifyTrack {
-  /** spotify:track:…, spotify:episode:…, spotify:ad:… */
+  /** spotify:track:…, spotify:episode:…, spotify:ad:… (on Windows, made from the title: spotify:windows:…) */
   id: string;
   title: string;
   artist: string;
   album: string;
   /** Seconds. */
   duration: number;
+  /** What the cover goes by: its URL on Linux, the track's id on Windows. */
   artUrl: string | null;
 }
 
@@ -84,6 +83,11 @@ export function formatTime(seconds: number): string {
   return s >= 3600
     ? `${Math.floor(s / 3600)}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`
     : `${Math.floor(s / 60)}:${pad(s % 60)}`;
+}
+
+/** Whether Spotify's volume can be read and set: a Windows media session has none. */
+export function hasVolume(os: HostOs): boolean {
+  return os !== "windows";
 }
 
 /** NowPlayingVolume.icon: 0 = muted, then one, two or three waves. */
