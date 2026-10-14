@@ -10,8 +10,9 @@
 // file's content is not ours to trust as HTML.
 
 import { Bridge, type Snippet } from "../core/bridge";
-import { State } from "../core/state";
-import { tl } from "../i18n/i18n";
+import { State, pillKind } from "../core/state";
+import { pillDefinition, sessionSubtitle } from "../core/pills";
+import { t, tl } from "../i18n/i18n";
 import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
 import type { ViewActions, ViewHost } from "./views";
@@ -406,6 +407,13 @@ export function codeRowBudget(d: CodeData): number {
   return d.command ? CODE_ROWS - 2 - d.command.tail.length : CODE_ROWS;
 }
 
+/** Whose session this is: Claude Code, Pi, ORCA, OpenCode… as the card says it. */
+function agentLabel(task: { id: string; sessionOf?: string | null }): string {
+  const kind = pillKind(task);
+  const known = sessionSubtitle(kind);
+  return known !== "Agent" ? known : pillDefinition(kind)?.name ?? t(known);
+}
+
 export function buildCodeView(actions: ViewActions): ViewHost {
   const left = h("div", { class: "code-left" });
   const editor = h("div", { class: "editor" });
@@ -434,7 +442,7 @@ export function buildCodeView(actions: ViewActions): ViewHost {
         h(
           "div",
           { class: "code-tool" },
-          h("span", { text: "Claude Code" }),
+          h("span", { text: agentLabel(task) }),
           h(
             "button",
             { class: "code-back", title: tl("Back"), onclick: () => actions.setView("overview") },

@@ -195,6 +195,23 @@ test("Pi, ORCA and OpenCode get a code view; other external agents do not", () =
   assert.equal(hasCode(CLAUDE), false);
 });
 
+test("the code view names the session's agent, never Claude Code for another one", () => {
+  const label = () => render().querySelector(".code-tool").textContent;
+  pre("Edit", EDIT);
+  State.focusId = CLAUDE;
+  assert.equal(label(), "Claude Code");
+  for (const [agent, name] of [["pi", "Pi"], ["opencode", "OpenCode"]]) {
+    pre("Edit", EDIT, { coucou_agent: agent, session_id: `${agent}1` });
+    State.focusId = `agent_${agent}`;
+    assert.equal(label(), name, agent);
+  }
+  State.settings.mainPill = "agent_orca";
+  State.loadIntegrationTasks();
+  pre("Edit", EDIT, { coucou_agent: "orca", session_id: "o1" });
+  State.focusId = "agent_orca";
+  assert.equal(label(), "ORCA");
+});
+
 test("a Pi edit is recorded for the live diff, as Claude Code's", () => {
   const multi = { file_path: EDIT.file_path, edits: [{ old_string: "a", new_string: "b" }] };
   pre("MultiEdit", multi, { coucou_agent: "pi", session_id: "p1" });
