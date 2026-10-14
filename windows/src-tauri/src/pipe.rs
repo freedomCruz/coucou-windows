@@ -216,6 +216,10 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
     if event != "StatusLine" {
         note_window_title(&mut payload);
     }
+    // The code view reads only from folders a hook reported (snippet.rs).
+    if let Some(cwd) = payload.get("cwd").and_then(Value::as_str) {
+        crate::snippet::note_folder(cwd);
+    }
     // Counts for the weekly recap — never the command, path or prompt itself.
     crate::recap::observe(&app, &payload);
 

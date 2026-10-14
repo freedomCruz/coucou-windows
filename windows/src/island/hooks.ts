@@ -15,6 +15,7 @@ import type { Island } from "./island";
 import { parseClaudePlan, restorePlanUsage } from "../core/plan";
 import { setClaudePlanUsage, storedClaudePlanUsage } from "../views/usage";
 import { N_, t } from "../i18n/i18n";
+import { beginTurn, dropCode, endTurn, toolFinished, toolStarted, type CodeSource } from "../views/session";
 
 const CLAUDE_ID = "integration_claude";
 const CURSOR_ID = "agent_cursor";
@@ -162,6 +163,12 @@ interface HookPayload {
   term_editor?: string;
   /** StatusLine (the plan usage relay): Claude Code's 5-hour and weekly limits. */
   rate_limits?: unknown;
+  /** PostToolUse of Bash / PowerShell: the last lines it printed (the relay keeps nothing else of its output). */
+  tool_tail?: unknown;
+  /** PostToolUseFailure: why the tool failed. */
+  error?: string;
+  /** Set when the session runs on another machine: its files cannot be read here. */
+  coucou_remote?: unknown;
 }
 
 const PROJECT_ALIASES: Record<string, string> = {
@@ -444,6 +451,15 @@ function handleHook(island: Island, payload: HookPayload) {
   // pill it has just made).
   if (State.tasks.some((x) => x.id === agentId)) armQuietTimer(agentId, sessionId);
 
+  // The code view's data: Claude Code's own pills only. Opening it is the user's click.
+  const code: CodeSource | null = isExternalAgent
+    ? null
+    : { sessionId, cwd, project: projectName, remote: !!payload.coucou_remote };
+  /** Leaves the code view when what it shows of this pill is gone. */
+  const leaveCode = () => {
+    if (focused && State.view === "code") island.setView(State.defaultView());
+  };
+
   switch (name) {
     case "SessionStart":
       ensurePill();
@@ -464,6 +480,10 @@ function handleHook(island: Island, payload: HookPayload) {
       // The field is `prompt`; reading `message` meant this step was always blank.
       const asked = payload.prompt ?? payload.message;
       if (asked) State.appendStep(agentId, asked.slice(0, 60));
+      if (code) {
+        beginTurn(agentId, code);
+        leaveCode();
+      }
       surface("overview", false);
       break;
     }
@@ -475,6 +495,7 @@ function handleHook(island: Island, payload: HookPayload) {
       State.updateTask(agentId, "working");
       const tool = payload.tool_name ?? "Tool";
       State.appendStep(agentId, stepLabel(tool, payload.tool_input ?? {}));
+      if (code) toolStarted(agentId, code, tool, payload.tool_input ?? {});
       surface("overview", false);
       break;
     }
@@ -489,12 +510,22 @@ function handleHook(island: Island, payload: HookPayload) {
       }
       State.updateTask(agentId, "working");
       recordDiff(agentId, payload);
+      if (code) {
+        const tail = Array.isArray(payload.tool_tail) ? payload.tool_tail : undefined;
+        toolFinished(agentId, cwd, payload.tool_name ?? "", payload.tool_input ?? {}, { tail });
+      }
       break;
 
     case "PostToolUseFailure":
       supersedeStop();
       State.updateTask(agentId, "working");
       State.appendStep(agentId, t("⚠ failed"));
+      if (code) {
+        toolFinished(agentId, cwd, payload.tool_name ?? "", payload.tool_input ?? {}, {
+          failed: true,
+          error: payload.error,
+        });
+      }
       break;
 
     case "Notification": {
@@ -513,6 +544,7 @@ function handleHook(island: Island, payload: HookPayload) {
     }
 
     case "Stop": {
+      if (code) endTurn(agentId);
       State.updateTask(agentId, "finished");
       // Claude Code puts the turn's answer in the Stop payload itself, so there is
       // no transcript to read (the relay does not even forward its path). Other
@@ -565,6 +597,10 @@ function handleHook(island: Island, payload: HookPayload) {
       cancelStopTimer(agentId);
       cancelQuietTimer(agentId);
       State.clearSessionDiffs(agentId);
+      if (code) {
+        dropCode(agentId);
+        leaveCode();
+      }
       if (isExternalAgent) {
         State.removeTask(agentId);
       } else {
