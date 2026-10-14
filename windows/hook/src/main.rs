@@ -183,6 +183,7 @@ fn prepare(raw: &[u8], args: &Args, env: &dyn Fn(&str) -> Option<String>, cwd: &
         .map(str::to_string)
         .unwrap_or_else(|| args.event.clone());
     normalize::fields(map, env);
+    normalize::canonical_tool(map);
     let name = normalize::refine(normalize::event(&raw_event), map);
     map.insert("hook_event_name".into(), Value::String(name.clone()));
 
@@ -209,6 +210,13 @@ fn prepare(raw: &[u8], args: &Args, env: &dyn Fn(&str) -> Option<String>, cwd: &
         let unc = map.get("cwd").and_then(Value::as_str).and_then(|c| wsl_unc(distro, c));
         if let Some(unc) = unc {
             map.insert("cwd".into(), Value::String(unc));
+        }
+        // The file a tool works on, so the code view can read it from here too.
+        if let Some(Value::Object(input)) = map.get_mut("tool_input") {
+            let unc = input.get("file_path").and_then(Value::as_str).and_then(|p| wsl_unc(distro, p));
+            if let Some(unc) = unc {
+                input.insert("file_path".into(), Value::String(unc));
+            }
         }
         map.insert("wsl_distro".into(), Value::String(distro.clone()));
     }
@@ -471,6 +479,27 @@ mod tests {
     fn a_wsl_cwd_becomes_a_path_windows_can_open() {
         assert_eq!(wsl_unc("Ubuntu", "/home/me/proj").unwrap(), r"\\wsl$\Ubuntu\home\me\proj");
         assert!(wsl_unc("Ubuntu", r"C:\work").is_none());
+    }
+
+    #[test]
+    fn a_wsl_session_s_files_and_command_output_reach_windows() {
+        let args = Args { agent: "pi".into(), event: String::new(), distro: Some("Ubuntu".into()) };
+        let raw = r#"{"hook_event_name":"PreToolUse","cwd":"/home/me/proj","tool_name":"edit","tool_input":{"path":"/home/me/proj/src/a.ts","edits":[{"oldText":"a","newText":"b"}]}}"#;
+        let ev = prepare(raw.as_bytes(), &args, &|_| None, "").expect("forwarded");
+        let v: Value = serde_json::from_str(ev.line.trim_end()).unwrap();
+        assert_eq!(v["cwd"], r"\\wsl$\Ubuntu\home\me\proj");
+        assert_eq!(v["tool_name"], "MultiEdit");
+        assert_eq!(v["tool_input"]["file_path"], r"\\wsl$\Ubuntu\home\me\proj\src\a.ts");
+        // A relative path is left to the island, which reads it against the cwd.
+        let raw = r#"{"hook_event_name":"PreToolUse","cwd":"/home/me/proj","tool_name":"read","tool_input":{"path":"src/a.ts"}}"#;
+        let ev = prepare(raw.as_bytes(), &args, &|_| None, "").expect("forwarded");
+        let v: Value = serde_json::from_str(ev.line.trim_end()).unwrap();
+        assert_eq!(v["tool_input"]["file_path"], "src/a.ts");
+        // Pi's bash output gives the command's last lines, as Claude Code's does.
+        let raw = r#"{"hook_event_name":"PostToolUse","tool_name":"bash","tool_input":{"command":"npm test"},"tool_response":"1\n2\n3\nok"}"#;
+        let (v, _) = run(raw, "pi", "");
+        assert_eq!(v["tool_name"], "Bash");
+        assert_eq!(v["tool_tail"], serde_json::json!(["2", "3", "ok"]));
     }
 
     #[test]

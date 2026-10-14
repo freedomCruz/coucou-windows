@@ -121,6 +121,63 @@ pub fn fields(map: &mut Map<String, Value>, env: &dyn Fn(&str) -> Option<String>
     }
 }
 
+/// Agents whose tools are renamed to Claude Code's: those whose events come
+/// from this repo's own plugins (Pi's extension, OpenCode's plugin). Other
+/// agents keep their names, so their steps read as they always have.
+const CANONICAL_AGENTS: &[&str] = &["pi", "orca", "opencode"];
+
+/// Their tool names, lowercase, and Claude Code's for the same tool.
+const TOOL_NAMES: &[(&str, &str)] = &[
+    ("bash", "Bash"),
+    ("powershell", "PowerShell"),
+    ("read", "Read"),
+    ("edit", "Edit"),
+    ("write", "Write"),
+    ("grep", "Grep"),
+    ("glob", "Glob"),
+];
+
+/// Their argument names, and Claude Code's (Pi: `path`; OpenCode: `filePath`,
+/// `oldString`, `newString`).
+const INPUT_ALIASES: &[(&str, &str)] = &[
+    ("path", "file_path"),
+    ("filePath", "file_path"),
+    ("oldString", "old_string"),
+    ("newString", "new_string"),
+];
+
+/// Pi's and OpenCode's tools under Claude Code's names and fields, so the live
+/// diff and the code view read them as they read Claude Code's. Pi's `edit`
+/// takes several replacements (`edits[].oldText / newText`): a MultiEdit.
+pub fn canonical_tool(map: &mut Map<String, Value>) {
+    let agent = map.get("coucou_agent").and_then(Value::as_str).unwrap_or_default();
+    if !CANONICAL_AGENTS.contains(&agent) {
+        return;
+    }
+    let tool = map.get("tool_name").and_then(Value::as_str).unwrap_or_default();
+    let Some(&(_, mut name)) = TOOL_NAMES.iter().find(|(from, _)| *from == tool) else { return };
+    if let Some(Value::Object(input)) = map.get_mut("tool_input") {
+        for (from, to) in INPUT_ALIASES {
+            if let Some(v) = input.remove(*from) {
+                input.entry((*to).to_string()).or_insert(v);
+            }
+        }
+        if let Some(Value::Array(edits)) = input.get_mut("edits") {
+            for edit in edits.iter_mut().filter_map(Value::as_object_mut) {
+                for (from, to) in [("oldText", "old_string"), ("newText", "new_string")] {
+                    if let Some(v) = edit.remove(from) {
+                        edit.insert(to.into(), v);
+                    }
+                }
+            }
+            if name == "Edit" {
+                name = "MultiEdit";
+            }
+        }
+    }
+    map.insert("tool_name".into(), Value::String(name.into()));
+}
+
 /// The event once the payload is known: a stop that reports an error (Cursor's
 /// `status: "error"`) is a StopFailure.
 pub fn refine(event: &str, map: &Map<String, Value>) -> String {
@@ -263,5 +320,53 @@ mod tests {
             assert_eq!(refine("Stop", &obj(json!({ "status": status }))), "Stop");
         }
         assert_eq!(refine("PreToolUse", &obj(json!({ "status": "error" }))), "PreToolUse");
+    }
+
+    #[test]
+    fn pi_and_opencode_tools_take_claude_codes_names_and_fields() {
+        // Pi: lowercase names, `path`, and its edits as oldText / newText.
+        let mut m = obj(json!({ "coucou_agent": "pi", "tool_name": "edit",
+            "tool_input": { "path": "src/a.ts", "edits": [{ "oldText": "a", "newText": "b" }] } }));
+        canonical_tool(&mut m);
+        assert_eq!(m["tool_name"], "MultiEdit");
+        assert_eq!(m["tool_input"]["file_path"], "src/a.ts");
+        assert_eq!(m["tool_input"]["edits"], json!([{ "old_string": "a", "new_string": "b" }]));
+
+        let mut m = obj(json!({ "coucou_agent": "orca", "tool_name": "write",
+            "tool_input": { "path": "/w/b.ts", "content": "x" } }));
+        canonical_tool(&mut m);
+        assert_eq!(m["tool_name"], "Write");
+        assert_eq!(m["tool_input"], json!({ "file_path": "/w/b.ts", "content": "x" }));
+
+        let mut m = obj(json!({ "coucou_agent": "pi", "tool_name": "bash", "tool_input": { "command": "ls" } }));
+        canonical_tool(&mut m);
+        assert_eq!(m["tool_name"], "Bash");
+
+        // OpenCode: filePath, oldString, newString.
+        let mut m = obj(json!({ "coucou_agent": "opencode", "tool_name": "edit",
+            "tool_input": { "filePath": "/w/c.ts", "oldString": "a", "newString": "b" } }));
+        canonical_tool(&mut m);
+        assert_eq!(m["tool_name"], "Edit");
+        assert_eq!(m["tool_input"], json!({ "file_path": "/w/c.ts", "old_string": "a", "new_string": "b" }));
+        let mut m = obj(json!({ "coucou_agent": "opencode", "tool_name": "read", "tool_input": { "filePath": "/w/c.ts" } }));
+        canonical_tool(&mut m);
+        assert_eq!(m["tool_name"], "Read");
+        assert_eq!(m["tool_input"]["file_path"], "/w/c.ts");
+    }
+
+    #[test]
+    fn other_agents_and_unknown_tools_are_left_as_they_are() {
+        // Copilot has an `edit` of its own, with other fields: untouched.
+        for (agent, tool) in [("copilot", "edit"), ("gemini", "write_file"), ("pi", "my_tool")] {
+            let before = obj(json!({ "coucou_agent": agent, "tool_name": tool, "tool_input": { "path": "a" } }));
+            let mut m = before.clone();
+            canonical_tool(&mut m);
+            assert_eq!(m, before, "{agent} {tool}");
+        }
+        // Claude Code (no tag) keeps its own names.
+        let before = obj(json!({ "tool_name": "Edit", "tool_input": { "file_path": "a" } }));
+        let mut m = before.clone();
+        canonical_tool(&mut m);
+        assert_eq!(m, before);
     }
 }
