@@ -19,6 +19,7 @@ test("the catalog holds the Mac's pills, in the Mac's order, with the Mac's valu
     ["agent_cursor", "Cursor", "#C0C4CC", "workspace", "Integration"],
     ["agent_antigravity", "Antigravity", "#E879F9", "workspace", "Integration"],
     ["agent_codex", "Codex", "#2DD4BF", "workspace", "Integration"],
+    ["agent_orca", "ORCA", "#06B6D4", "workspace", "Integration"],
     ["agent_gemini", "Gemini CLI", "#8AB4F8", "agent", "Agent"],
     ["agent_copilot", "Copilot CLI", "#818CF8", "agent", "Agent"],
     ["agent_muse", "Muse Code", "#38BDF8", "agent", "Agent"],
@@ -26,7 +27,6 @@ test("the catalog holds the Mac's pills, in the Mac's order, with the Mac's valu
     ["agent_amp", "Amp", "#F59E0B", "agent", "Agent"],
     ["agent_hermes", "Hermes", "#C084FC", "agent", "Agent"],
     ["agent_pi", "Pi", "#EC4899", "agent", "Agent"],
-    ["agent_orca", "ORCA", "#06B6D4", "agent", "Agent"],
     ["agent_claude-desktop", "Claude Desktop", "#D97757", "agent", "Agent"],
     ["ai_anthropic", "Anthropic", "#E07950", "ai", "Chat"],
     ["ai_google", "Google AI", "#4285F4", "ai", "Chat"],
@@ -133,9 +133,10 @@ test("no chat provider that works here says Coming soon", () => {
 
 test("the main pill is a workspace tool that works here", () => {
   assert.deepEqual(mainPillChoices("linux").map((p) => p.id), [
-    "integration_claude", "agent_cursor", "agent_antigravity", "agent_codex",
+    "integration_claude", "agent_cursor", "agent_antigravity", "agent_codex", "agent_orca",
   ]);
-  assert.equal(DEFAULT_MAIN_PILL, "integration_claude");
+  // This fork defaults to ORCA, the ADE its sessions run in.
+  assert.equal(DEFAULT_MAIN_PILL, "agent_orca");
 });
 
 test("hook-driven pills are the workspace tools and the agents with hooks", () => {
@@ -160,7 +161,7 @@ test("a live session names its tool next to the project", () => {
 test("a declaration from an older or edited settings file is made usable", () => {
   assert.deepEqual(
     sanitizeDeclared({ mainPill: "integration_stripe", activeIntegrations: ["integration_claude", "x"] }, "linux"),
-    { mainPill: "integration_claude", activeIntegrations: [] },
+    { mainPill: "agent_orca", activeIntegrations: ["integration_claude"] },
   );
   assert.deepEqual(
     sanitizeDeclared({ mainPill: "agent_cursor", activeIntegrations: ["agent_cursor", "integration_n8n", "integration_n8n", "integration_music"] }, "linux"),
@@ -169,10 +170,10 @@ test("a declaration from an older or edited settings file is made usable", () =>
   // No mainPill at all: a settings.json from before this version.
   assert.deepEqual(
     sanitizeDeclared({ activeIntegrations: ["integration_github"] }, "windows"),
-    { mainPill: "integration_claude", activeIntegrations: ["integration_github"] },
+    { mainPill: "agent_orca", activeIntegrations: ["integration_github"] },
   );
   assert.equal(sanitizeDeclared({ mainPill: "agent_claude-desktop", activeIntegrations: [] }, "windows").mainPill,
-    "integration_claude");
+    "agent_orca");
 });
 
 test("up to four pills next to the main one, never the main one itself", () => {
@@ -220,7 +221,7 @@ beforeEach(() => {
   State.tasks = [];
   State.focusId = null;
   State.os = "windows";
-  State.settings = { ...DEFAULT_SETTINGS };
+  State.settings = { ...DEFAULT_SETTINGS, mainPill: "integration_claude" };
 });
 
 const ids = () => State.tasks.map((t) => t.id);
@@ -235,13 +236,13 @@ test("the main pill always loads, the declared ones join it, and focus starts on
   assert.equal(State.tasks[1].color, "#8AB4F8");
 });
 
-test("an old settings file gets VS Code as its main pill and keeps its integrations", () => {
+test("an old settings file gets ORCA as its main pill and keeps its integrations", () => {
   State.settings = { ...DEFAULT_SETTINGS, mainPill: undefined };
   State.loadIntegrationTasks();
   assert.deepEqual(ids(), [
-    "integration_claude", "integration_resend", "integration_n8n", "integration_vercel", "integration_github",
+    "agent_orca", "integration_resend", "integration_n8n", "integration_vercel", "integration_github",
   ]);
-  assert.equal(State.settings.mainPill, "integration_claude");
+  assert.equal(State.settings.mainPill, "agent_orca");
 });
 
 test("switching the main pill frees its slot and the old main pill goes when idle", () => {

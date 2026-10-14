@@ -81,6 +81,9 @@ export const PILL_CATALOG: readonly PillDefinition[] = [
     subtitle: N_("Integration"), source: "agent", support: "yes", connect: hooks },
   { id: "agent_codex", name: "Codex", color: "#2DD4BF", category: "workspace",
     subtitle: N_("Integration"), source: "agent", support: "yes", connect: hooks },
+  // ORCA is an ADE: its sessions arrive through the Pi extension, nothing to install.
+  { id: "agent_orca", name: "ORCA", color: "#06B6D4", category: "workspace",
+    subtitle: N_("Integration"), source: "agent", support: "yes", connect: none },
   // ── Agents ─────────────────────────────────────────────────────────────────
   { id: "agent_gemini", name: "Gemini CLI", color: "#8AB4F8", category: "agent",
     subtitle: N_("Agent"), source: "agent", support: "yes", connect: hooks },
@@ -96,8 +99,6 @@ export const PILL_CATALOG: readonly PillDefinition[] = [
   { id: "agent_hermes", name: "Hermes", color: "#C084FC", category: "agent",
     subtitle: N_("Agent"), source: "agent", support: "yes", connect: hooks },
   { id: "agent_pi", name: "Pi", color: "#EC4899", category: "agent",
-    subtitle: N_("Agent"), source: "agent", support: "yes", connect: none },
-  { id: "agent_orca", name: "ORCA", color: "#06B6D4", category: "agent",
     subtitle: N_("Agent"), source: "agent", support: "yes", connect: none },
   // Claude Code sessions run from the Claude desktop app: the relay tags them
   // from CLAUDE_CODE_ENTRYPOINT, so there is nothing to install. The app has no
@@ -141,7 +142,7 @@ export const PILL_CATALOG: readonly PillDefinition[] = [
 ];
 
 /** The always-on pill unless the user picks another workspace tool. */
-export const DEFAULT_MAIN_PILL = "integration_claude";
+export const DEFAULT_MAIN_PILL = "agent_orca";
 
 /** How many declared pills may sit next to the main one. */
 export const MAX_DECLARED = 4;

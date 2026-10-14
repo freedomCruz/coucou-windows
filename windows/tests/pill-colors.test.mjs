@@ -69,7 +69,7 @@ beforeEach(() => {
   State.tasks = [];
   State.focusId = null;
   State.os = "windows";
-  State.settings = { ...DEFAULT_SETTINGS };
+  State.settings = { ...DEFAULT_SETTINGS, mainPill: "integration_claude" };
 });
 
 const colorOf = (id) => State.tasks.find((t) => t.id === id)?.color;

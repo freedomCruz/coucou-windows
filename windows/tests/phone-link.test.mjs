@@ -34,7 +34,7 @@ beforeEach(() => {
   State.tasks = [];
   State.focusId = null;
   State.pendingApproval = null;
-  State.settings = { ...DEFAULT_SETTINGS, activeIntegrations: ["integration_github"] };
+  State.settings = { ...DEFAULT_SETTINGS, mainPill: "integration_claude", activeIntegrations: ["integration_github"] };
   State.loadIntegrationTasks();
 });
 

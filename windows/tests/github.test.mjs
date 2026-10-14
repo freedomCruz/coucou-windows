@@ -177,7 +177,7 @@ beforeEach(() => {
   State.focusId = null;
   State.mode = "hidden";
   State.paused = false;
-  State.settings = { ...DEFAULT_SETTINGS };
+  State.settings = { ...DEFAULT_SETTINGS, mainPill: "integration_claude" };
   State.loadIntegrationTasks();
 });
 
