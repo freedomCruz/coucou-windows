@@ -1176,6 +1176,8 @@ export class Island {
     // The chat is the only view with a text field, so it is the only time the
     // island is allowed to take keyboard focus.
     if (this.lastSyncedView !== State.view) {
+      // Which view the island actually drew, and for which pill (diagnosis).
+      void Bridge.log(`view ${this.lastSyncedView} -> ${State.view} focus=${State.focusId} mode=${State.mode}`);
       const wasChat = this.lastSyncedView === "prompt";
       this.lastSyncedView = State.view;
       if (State.view === "prompt") {
