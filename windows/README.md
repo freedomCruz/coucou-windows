@@ -408,6 +408,10 @@ get the island's card for Claude Code (in any terminal, and in Cursor's),
 Codex, Copilot CLI and Muse Code; other agents and Claude Desktop ask in their
 own window.
 
+**Pi and ORCA** have nothing to install in Coucou: a Pi extension reports the
+sessions, tagged `orca` in ORCA's terminals and `pi` anywhere else. Its source
+and how to install it are in [`integrations/pi/`](integrations/pi/README.md).
+
 ## What's different from the Mac version
 
 - No notch, so the island lives at the top centre of the screen and retracts into
