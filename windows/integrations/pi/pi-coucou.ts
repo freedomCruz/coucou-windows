@@ -51,6 +51,10 @@ interface CoucouPayload {
   prompt?: string;
   tool_name?: string;
   tool_input?: unknown;
+  /** A tool's output (the relay forwards a command's last lines only). */
+  tool_response?: string;
+  /** PostToolUseFailure: why the tool failed. */
+  error?: string;
   cwd?: string;
 }
 
@@ -82,6 +86,15 @@ function sendToCoucou(payload: CoucouPayload): void {
   } catch {
     // Fail silently
   }
+}
+
+/** A tool result's text, its end only: what a command printed last is what matters. */
+function resultText(content: unknown): string {
+  if (!Array.isArray(content)) return "";
+  const text = content
+    .map((part) => (part && typeof part === "object" && part.type === "text" ? String(part.text ?? "") : ""))
+    .join("");
+  return text.length > 4000 ? text.slice(-4000) : text;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -117,24 +130,30 @@ export default function (pi: ExtensionAPI) {
     });
   });
 
+  // Pi's own tool names and fields (edit, path, edits[].oldText…): the relay
+  // gives them Claude Code's, which the live diff and the code view read.
   pi.on("tool_call", async (event, ctx) => {
     sendToCoucou({
       hook_event_name: "PreToolUse",
       session_id: sessionId,
       coucou_agent: getAgentName(ctx),
-      tool_name: event?.name || "tool",
+      tool_name: event?.toolName || "tool",
       tool_input: event?.input,
       cwd: process.cwd(),
     });
   });
 
   pi.on("tool_result", async (event, ctx) => {
+    const output = resultText(event?.content);
     sendToCoucou({
-      hook_event_name: "PostToolUse",
+      hook_event_name: event?.isError ? "PostToolUseFailure" : "PostToolUse",
       session_id: sessionId,
       coucou_agent: getAgentName(ctx),
-      tool_name: event?.name || "tool",
+      tool_name: event?.toolName || "tool",
       tool_input: event?.input,
+      // The relay keeps only a command's last lines of it, and nothing of any other tool's.
+      tool_response: output,
+      error: event?.isError ? output.slice(0, 200) : undefined,
       cwd: process.cwd(),
     });
   });

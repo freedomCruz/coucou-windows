@@ -41,6 +41,16 @@ No relay found, or Coucou not running: the event is dropped and Pi goes on.
   reads the same variable); `ORCA_SESSION` and `ADE=orca` are still accepted.
 - Anywhere else it is tagged `pi` and goes on the Pi pill.
 
+## What it sends
+
+Pi's tool calls go as `PreToolUse` and `PostToolUse` (`PostToolUseFailure`
+when the tool failed) with Pi's own names and fields: `edit` with `path` and
+`edits[].oldText / newText`, `write`, `read`, `bash`. The relay renames them
+to Claude Code's (`MultiEdit`, `file_path`, `old_string`…; see
+`hook/src/normalize.rs`), so the live diff and the code view work as they do
+for Claude Code. A tool's output goes as `tool_response`, its last 4000
+characters; the relay keeps only a command's last lines of it.
+
 A pill for an agent that is not declared in Settings → Active pills comes with
 the session and goes 5 s after each turn ends. A second session working at the
 same time gets a pill of its own.
