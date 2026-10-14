@@ -422,6 +422,8 @@ sessions, tagged `orca` in ORCA's terminals and `pi` anywhere else. Its source
 and how to install it are in [`integrations/pi/`](integrations/pi/README.md).
 OpenCode inside WSL needs its plugin in the distro: see
 [`integrations/opencode/`](integrations/opencode/README.md).
+Claude Code inside WSL needs Coucou's hooks in the distro's own settings: see
+[`integrations/claude-code-wsl/`](integrations/claude-code-wsl/README.md).
 
 ## What's different from the Mac version
 
