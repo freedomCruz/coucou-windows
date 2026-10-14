@@ -275,6 +275,12 @@ fn open_claude_desktop() -> bool {
     platform::open_claude_desktop()
 }
 
+/// The ORCA pill's target: the ORCA app, whose terminals the sessions run in.
+#[tauri::command]
+fn open_orca() -> bool {
+    platform::open_orca()
+}
+
 /// The file behind a live diff, if it may be handed to the editor: an existing
 /// regular file given by its full path. Anything else — a relative path, a
 /// folder, a path `code` could read as an option — goes no further.
@@ -692,6 +698,7 @@ pub fn run() {
             open_in_vscode,
             open_session,
             open_claude_desktop,
+            open_orca,
             open_file_in_vscode,
             quit_app,
             hooks_status,

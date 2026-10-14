@@ -424,6 +424,13 @@ test("the terminal shortcut is the existing Open terminal (the session's window)
   State.setFocus("agent_claude-desktop");
   runGlobalShortcut(host, "jumpToTerminal", resume);
   assert.equal(sent("open_claude_desktop").length, 1);
+
+  // An ORCA session runs in ORCA's own terminals: no window of its own to find.
+  State.upsertExternalAgent("agent_orca", "ORCA", "#06B6D4");
+  State.setFocus("agent_orca");
+  runGlobalShortcut(host, "jumpToTerminal", resume);
+  assert.equal(sent("open_orca").length, 1);
+  assert.equal(sent("open_session").length, 1);
 });
 
 test("next and previous pill wrap around and open the overview", () => {

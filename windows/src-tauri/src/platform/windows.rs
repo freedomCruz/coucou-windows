@@ -541,6 +541,18 @@ pub fn open_claude_desktop() -> bool {
     exe.is_file() && Command::new(exe).spawn().is_ok()
 }
 
+/// The ORCA app: its terminals hang off a helper process with no window, so a
+/// session's own window is never found. Brought forward when it runs, started
+/// from where its installer puts it otherwise.
+pub fn open_orca() -> bool {
+    if focus_app("orca.exe") {
+        return true;
+    }
+    let Some(base) = std::env::var_os("LOCALAPPDATA") else { return false };
+    let exe = PathBuf::from(base).join("Programs").join("orca").join("Orca.exe");
+    exe.is_file() && Command::new(exe).spawn().is_ok()
+}
+
 // ── Global shortcuts ──────────────────────────────────────────────────────────
 
 /// RegisterHotKey works in every Windows session.

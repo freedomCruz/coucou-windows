@@ -226,6 +226,9 @@ export const Bridge = {
   /** The Claude desktop app, for the Claude Desktop pill (Windows only). */
   openClaudeDesktop: () => call<boolean>("open_claude_desktop"),
 
+  /** The ORCA app, for the ORCA pill: its sessions run in its own terminals. */
+  openOrca: () => call<boolean>("open_orca"),
+
   /** The diff card's ↗: an existing file, in VS Code; never launched by its type. */
   openFileInVSCode: (path: string) => call<boolean>("open_file_in_vscode", { path }),
 

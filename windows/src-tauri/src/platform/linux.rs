@@ -268,6 +268,11 @@ pub fn open_claude_desktop() -> bool {
     false
 }
 
+/// ORCA's Linux window is not looked for yet.
+pub fn open_orca() -> bool {
+    false
+}
+
 /// Where the Codex CLI may be, best first: $PATH, then the usual per-user
 /// install folders, which a desktop launch often leaves out of $PATH (npm's
 /// global prefix, Volta, Bun, pnpm, and nvm with its newest Node first).

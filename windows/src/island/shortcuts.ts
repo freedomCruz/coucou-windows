@@ -14,6 +14,7 @@ import { Sound } from "../core/sound";
 import { State } from "../core/state";
 
 const CLAUDE_DESKTOP_ID = "agent_claude-desktop";
+const ORCA_ID = "agent_orca";
 
 /** What the shortcuts need from the island. */
 export interface ShortcutHost {
@@ -90,10 +91,11 @@ export function runGlobalShortcut(host: ShortcutHost, action: string, resume: ()
 
     // The Mac brings the terminal app forward; here it is the existing "Open
     // terminal": the session's own window when it was found, else its folder
-    // in VS Code; the Claude app for a Claude Desktop session.
+    // in VS Code; the Claude app for a Claude Desktop session, ORCA for ORCA's.
     case "jumpToTerminal": {
       const task = State.focusTask;
       if (task?.id === CLAUDE_DESKTOP_ID) void Bridge.openClaudeDesktop();
+      else if (task?.id === ORCA_ID) void Bridge.openOrca();
       else void Bridge.openSession(task?.sessionId ?? null, task?.sessionCwd ?? null);
       if (State.mode === "expanded") host.collapse();
       break;
