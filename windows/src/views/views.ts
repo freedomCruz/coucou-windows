@@ -5,7 +5,7 @@
 import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
 import { Ticker } from "./ticker";
-import { State, type AgentTask } from "../core/state";
+import { State, pillKind, type AgentTask } from "../core/state";
 import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
@@ -103,6 +103,16 @@ function agentWho(task: AgentTask | null, label: string): HTMLElement {
   }
   row.append(h("span", { text: label }));
   return row;
+}
+
+/**
+ * "+2 waiting" after the name on a card, when other sessions asked while this
+ * one was up: they come up in turn, each as the one before is answered.
+ */
+function queuedNote(): HTMLElement[] {
+  const count = State.approvalQueue.length;
+  if (count === 0) return [];
+  return [h("span", { class: "queued", text: t("+{count} waiting", { count }) })];
 }
 
 function stack(padLeft: number, padRight: number, ...children: Node[]): HTMLElement {
@@ -358,8 +368,8 @@ function buildOverview(actions: ViewActions): ViewHost {
           // (Windows), the pill says what the session is about; the project
           // folder then goes where the kind of pill was.
           task.windowTitle
-            ? h("span", { class: "tool title", text: folderOf(task.sessionCwd) || t(sessionSubtitle(task.id)) })
-            : h("span", { class: "tool", text: t(sessionSubtitle(task.id)) }),
+            ? h("span", { class: "tool title", text: folderOf(task.sessionCwd) || t(sessionSubtitle(pillKind(task))) })
+            : h("span", { class: "tool", text: t(sessionSubtitle(pillKind(task))) }),
         );
         if (task.steps.length > 1) {
           who.append(h("span", {
@@ -429,6 +439,8 @@ function buildOverview(actions: ViewActions): ViewHost {
 export function hasSessionTicker(task: AgentTask): boolean {
   // A pill made for an agent's session (Gemini CLI, Codex… not declared) only
   // exists while that session does: it keeps the ticker from the first event.
+  // So does a pill made for a second session of any kind.
+  if (task.sessionOf) return true;
   if (task.source === "agent" && !task.isIntegration) return true;
   const category = pillDefinition(task.id)?.category;
   const isSession = category === "workspace" || category === "agent" ||
@@ -539,7 +551,7 @@ function buildApproval(actions: ViewActions): ViewHost {
         shownAt = performance.now();
       }
       clear(who);
-      who.append(agentWho(State.focusTask, t("needs permission")));
+      who.append(agentWho(State.focusTask, t("needs permission")), ...queuedNote());
       // The whole point of approving here rather than in the terminal: this line
       // is the command, the file path or the URL being authorised, not just the
       // name of the tool asking.
@@ -616,7 +628,7 @@ function buildQuestion(actions: ViewActions): ViewHost {
       const asking = questions.length > 1
         ? t("is asking ({index} of {total})", { index: index + 1, total: questions.length })
         : t("is asking");
-      who.append(agentWho(State.focusTask, asking));
+      who.append(agentWho(State.focusTask, asking), ...queuedNote());
       title.textContent = q.question;
       title.title = q.question;
 
