@@ -11,7 +11,7 @@ import {
   type BotEmoteName, type IslandMode, type IslandViewName,
 } from "../core/layout";
 import { Sound } from "../core/sound";
-import { State } from "../core/state";
+import { State, pillKind } from "../core/state";
 import { SPOTIFY_ID, islandDances } from "../core/spotify";
 import { BotEngine, hexToRGB } from "../mochi/engine";
 import { Greeting } from "../mochi/greeting";
@@ -177,8 +177,8 @@ export class Island {
       openTerminal: () => {
         const task = State.focusTask;
         // Sessions from the Claude desktop app live there, not in a terminal.
-        if (task?.id === CLAUDE_DESKTOP_ID) void Bridge.openClaudeDesktop();
-        else if (task?.id === ORCA_ID) void Bridge.openOrca();
+        if (task && pillKind(task) === CLAUDE_DESKTOP_ID) void Bridge.openClaudeDesktop();
+        else if (task && pillKind(task) === ORCA_ID) void Bridge.openOrca();
         else void Bridge.openSession(task?.sessionId ?? null, task?.sessionCwd ?? null);
       },
       // The ↗ button — same targets as openAgentTarget() on macOS.
@@ -193,8 +193,8 @@ export class Island {
           integration_notion: "https://notion.so",
           integration_calcom: "https://app.cal.com/bookings",
         };
-        if (task.id === CLAUDE_DESKTOP_ID) void Bridge.openClaudeDesktop();
-        else if (task.id === ORCA_ID) void Bridge.openOrca();
+        if (pillKind(task) === CLAUDE_DESKTOP_ID) void Bridge.openClaudeDesktop();
+        else if (pillKind(task) === ORCA_ID) void Bridge.openOrca();
         else if (task.id === "integration_claude" || task.sessionId) {
           void Bridge.openSession(task.sessionId ?? null, task.sessionCwd ?? null);
         } else if (task.id === "integration_n8n") void Bridge.openN8n();

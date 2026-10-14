@@ -431,6 +431,13 @@ test("the terminal shortcut is the existing Open terminal (the session's window)
   runGlobalShortcut(host, "jumpToTerminal", resume);
   assert.equal(sent("open_orca").length, 1);
   assert.equal(sent("open_session").length, 1);
+
+  // So does a second ORCA session, on a pill of its own.
+  State.upsertSessionPill("agent_orca~o2", "agent_orca", "beta", "#06B6D4", "C:\\w\\beta", "o2");
+  State.setFocus("agent_orca~o2");
+  runGlobalShortcut(host, "jumpToTerminal", resume);
+  assert.equal(sent("open_orca").length, 2);
+  assert.equal(sent("open_session").length, 1);
 });
 
 test("next and previous pill wrap around and open the overview", () => {

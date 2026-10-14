@@ -795,6 +795,25 @@ test("a second Codex session gets its own pill too, named after its project", ()
   assert.equal(task("agent_codex").sessionId, "c1");
 });
 
+test("two Pi sessions, and two ORCA sessions on the main pill, get a pill each", () => {
+  State.settings.mainPill = "agent_orca";
+  State.loadIntegrationTasks();
+  hook({ hook_event_name: "SessionStart", session_id: "p1", cwd: "/home/w/alpha", coucou_agent: "pi" });
+  hook({ hook_event_name: "SessionStart", session_id: "p2", cwd: "/home/w/beta", coucou_agent: "pi" });
+  assert.equal(task("agent_pi").sessionId, "p1");
+  assert.equal(task("agent_pi~p2").name, "beta");
+  assert.equal(task("agent_pi~p2").color, task("agent_pi").color);
+  hook({ hook_event_name: "SessionStart", session_id: "o1", cwd: "C:\\w\\alpha", coucou_agent: "orca" });
+  hook({ hook_event_name: "SessionStart", session_id: "o2", cwd: "C:\\w\\beta", coucou_agent: "orca" });
+  assert.equal(task("agent_orca").sessionId, "o1");
+  assert.equal(task("agent_orca~o2").name, "beta");
+  // The main pill stays itself and first; the session's pill goes with it.
+  assert.equal(State.tasks[0].id, "agent_orca");
+  hook({ hook_event_name: "SessionEnd", session_id: "o2", coucou_agent: "orca" });
+  assert.equal(task("agent_orca~o2"), undefined);
+  assert.equal(task("agent_orca").name, "ORCA");
+});
+
 const askFrom = (request_id, session_id, folder, extra = {}) =>
   ask(request_id, { session_id, cwd: `C:\\w\\${folder}`, tool_name: "Bash", tool_input: { command: "ls" }, ...extra });
 

@@ -11,7 +11,7 @@ import { Bridge, onEvent } from "../core/bridge";
 import type { BotEmoteName, IslandViewName } from "../core/layout";
 import { cyclePill, islandKeyAction, navigate, pillByNumber, type IslandKeyAction } from "../core/shortcuts";
 import { Sound } from "../core/sound";
-import { State } from "../core/state";
+import { State, pillKind } from "../core/state";
 
 const CLAUDE_DESKTOP_ID = "agent_claude-desktop";
 const ORCA_ID = "agent_orca";
@@ -94,8 +94,8 @@ export function runGlobalShortcut(host: ShortcutHost, action: string, resume: ()
     // in VS Code; the Claude app for a Claude Desktop session, ORCA for ORCA's.
     case "jumpToTerminal": {
       const task = State.focusTask;
-      if (task?.id === CLAUDE_DESKTOP_ID) void Bridge.openClaudeDesktop();
-      else if (task?.id === ORCA_ID) void Bridge.openOrca();
+      if (task && pillKind(task) === CLAUDE_DESKTOP_ID) void Bridge.openClaudeDesktop();
+      else if (task && pillKind(task) === ORCA_ID) void Bridge.openOrca();
       else void Bridge.openSession(task?.sessionId ?? null, task?.sessionCwd ?? null);
       if (State.mode === "expanded") host.collapse();
       break;
