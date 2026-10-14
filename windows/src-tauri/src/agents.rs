@@ -801,11 +801,16 @@ export const CoucouPlugin = async ({ directory } = {}) => ({
       tool_input: output?.args ?? null,
     });
   },
-  'tool.execute.after': async (input) => {
+  // The relay gives OpenCode's tools Claude Code's names, keeps a command's
+  // last lines of its output and nothing of any other tool's.
+  'tool.execute.after': async (input, output) => {
+    const text = typeof output?.output === 'string' ? output.output : '';
     forward('PostToolUse', {
       session_id: input?.sessionID || '',
       cwd: directory || '',
       tool_name: typeof input?.tool === 'string' ? input.tool : '',
+      tool_input: input?.args ?? null,
+      tool_response: text.length > 4000 ? text.slice(-4000) : text,
     });
   },
 });
@@ -1221,6 +1226,15 @@ mod tests {
             }
             let _ = std::fs::remove_dir_all(home);
         }
+    }
+
+    #[test]
+    fn opencode_s_plugin_forwards_a_finished_tool_s_args_and_output() {
+        // The live diff and the code view need both (the relay renames them).
+        let plugin = &Agent::OpenCode.plugin(&linux()).unwrap()[0];
+        let after = &plugin[plugin.find("'tool.execute.after'").unwrap()..];
+        assert!(after.contains("tool_input: input?.args ?? null"));
+        assert!(after.contains("tool_response:"));
     }
 
     #[test]
