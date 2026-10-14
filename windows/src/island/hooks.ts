@@ -560,6 +560,10 @@ function handleHook(island: Island, payload: HookPayload) {
         if (t) t.finalLine = finalText;
       }
       Sound.play("finish");
+      // Why the finished card did or did not come up, for the log.
+      void Bridge.log(
+        `stop ${agentId} focused=${focused} focus=${State.focusId} pending=${!!State.pendingApproval} view=${State.view} mode=${State.mode}`,
+      );
       // A card waiting for an answer is never covered by another alert.
       if (focused && !State.pendingApproval) surface("finished", true);
       else State.setPillBadge(agentId, "finished");

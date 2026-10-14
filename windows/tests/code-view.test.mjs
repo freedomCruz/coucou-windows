@@ -382,6 +382,27 @@ test("FAIL lines get a red badge", () => {
 
 // ── Opening and leaving ───────────────────────────────────────────────────────
 
+test("the end of a turn brings up the finished card over an open code view", () => {
+  pre("Edit", EDIT);
+  post("Edit", EDIT);
+  State.focusId = CLAUDE;
+  State.view = "code";
+  hook({ hook_event_name: "Stop", last_assistant_message: "Fixed." });
+  assert.equal(State.view, "finished");
+  assert.ok(asked.includes("setView:finished"), asked.join(" "));
+});
+
+test("so does the end of a second session's turn, on its own pill", () => {
+  const SECOND = `${CLAUDE}~s2`;
+  pre("Edit", EDIT);
+  pre("Bash", { command: "ls" }, { session_id: "s2", cwd: "/home/alice/api" });
+  post("Bash", { command: "ls" }, { session_id: "s2", cwd: "/home/alice/api", tool_tail: ["a"] });
+  State.focusId = SECOND;
+  State.view = "code";
+  hook({ hook_event_name: "Stop", session_id: "s2", cwd: "/home/alice/api", last_assistant_message: "Done." });
+  assert.equal(State.view, "finished");
+});
+
 test("the back button goes to the overview, and nothing opens the view by itself", () => {
   pre("Edit", EDIT);
   post("Edit", EDIT);
