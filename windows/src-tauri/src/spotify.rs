@@ -1,4 +1,4 @@
-// The Spotify pill — port of SpotifyController.swift, for Linux and Windows.
+// The Spotify pill — port of SpotifyController.swift.
 //
 // The Mac listens to Spotify's distributed notification and drives it over
 // AppleScript. Linux has MPRIS instead: Spotify owns
@@ -13,16 +13,11 @@
 // the card comes on screen; the page runs it on from a timestamp while playing,
 // as the Mac's `position(at:)` does. Turning the pill off ends the thread.
 //
-// Windows has the system's media sessions (Windows.Media.Control, what the
-// volume flyout shows): Spotify's session gives the track, its cover, the
-// playback status, shuffle, repeat and the timeline, and takes the same
-// controls — everything but the volume, which a media session doesn't have.
-// It is read into the same MPRIS-shaped properties, so one PlayerState serves
-// both. Nothing runs on a timer there either: one thread sleeps on a channel
-// that the session's own change events wake.
+// Windows reads the system media controls instead (see "Windows" below): the
+// same state reaches the island, from events rather than D-Bus signals.
 
-// Some of the pure parts below are only reached from one client and the tests.
-#![allow(dead_code)]
+// The MPRIS parts below are only reached from the Linux client and the tests.
+#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 use serde::Serialize;
 use tauri::AppHandle;
@@ -103,7 +98,7 @@ pub struct Track {
     /// Seconds.
     pub duration: f64,
     pub art_url: Option<String>,
-    /// mpris:trackid as Spotify gave it, for SetPosition (Linux).
+    /// mpris:trackid as Spotify gave it, for SetPosition.
     #[serde(skip)]
     pub object_path: String,
 }
@@ -168,19 +163,6 @@ impl PlayerState {
     fn anchor(&mut self, position: f64, now_ms: f64) {
         self.position = position.max(0.0);
         self.position_at = now_ms;
-    }
-
-    /// Whether the island would show something else than for `shown`: any
-    /// field, or a position more than a second away (a seek, not the clock).
-    pub fn differs_from(&self, shown: &PlayerState, now_ms: f64) -> bool {
-        self.running != shown.running
-            || self.installed != shown.installed
-            || self.track != shown.track
-            || self.playing != shown.playing
-            || self.shuffle != shown.shuffle
-            || self.repeat != shown.repeat
-            || self.volume != shown.volume
-            || (self.position_at_time(now_ms) - shown.position_at_time(now_ms)).abs() > 1.0
     }
 
     /// Spotify is gone, or the pill is off: nothing is playing.
@@ -362,88 +344,6 @@ pub fn short_artist(raw: &str) -> String {
     raw.to_string()
 }
 
-// ── Windows: a media session as MPRIS properties ──────────────────────────────
-
-/// Spotify's ids in Windows' media sessions: its own installer's, and the
-/// Microsoft Store app's (`SpotifyAB.SpotifyMusic_…!Spotify`).
-pub fn is_spotify_app(app_id: &str) -> bool {
-    let id = app_id.to_ascii_lowercase();
-    id == "spotify.exe" || id.starts_with("spotifyab.spotifymusic_")
-}
-
-/// What Windows says of Spotify's session, as plain values.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Session {
-    pub title: String,
-    pub artist: String,
-    pub album: String,
-    pub has_cover: bool,
-    /// "Playing", "Paused" or "Stopped"; None while it is between two (a
-    /// track loading), when the last one still stands.
-    pub status: Option<&'static str>,
-    pub shuffle: Option<bool>,
-    pub repeat: Option<bool>,
-    /// Seconds, at `updated_ms`.
-    pub position: f64,
-    pub duration: f64,
-    /// Unix milliseconds; 0 when Spotify gave no time.
-    pub updated_ms: f64,
-}
-
-/// Windows' DateTime (100 ns ticks since 1601) → Unix milliseconds.
-pub fn unix_ms(universal_time: i64) -> f64 {
-    universal_time as f64 / 10_000.0 - 11_644_473_600_000.0
-}
-
-/// A media session has no track id: an ad is told by what Spotify calls it,
-/// with no artist and no album.
-fn is_session_ad(session: &Session) -> bool {
-    session.artist.is_empty()
-        && session.album.is_empty()
-        && ["advertisement", "spotify", "spotify free"].contains(&session.title.trim().to_lowercase().as_str())
-}
-
-/// The session as Player properties for `PlayerState::apply`. The track id is
-/// made from what identifies the track, and is also what its cover goes by.
-pub fn session_props(session: &Session, now_ms: f64) -> Vec<(String, Value)> {
-    let mut metadata = Vec::new();
-    if !session.title.is_empty() {
-        let id = if is_session_ad(session) {
-            format!("spotify:ad:{}", session.title)
-        } else {
-            format!("spotify:windows:{}\u{1f}{}\u{1f}{}", session.artist, session.album, session.title)
-        };
-        if session.has_cover {
-            metadata.push(("mpris:artUrl".to_string(), Value::Str(id.clone())));
-        }
-        metadata.push(("mpris:trackid".to_string(), Value::Str(id)));
-        metadata.push(("xesam:title".to_string(), Value::Str(session.title.clone())));
-        metadata.push(("xesam:artist".to_string(), Value::Str(session.artist.clone())));
-        metadata.push(("xesam:album".to_string(), Value::Str(session.album.clone())));
-        metadata.push(("mpris:length".to_string(), Value::Int((session.duration.max(0.0) * 1_000_000.0) as i64)));
-    }
-    let mut props = vec![("Metadata".to_string(), Value::Map(metadata))];
-    if let Some(status) = session.status {
-        props.push(("PlaybackStatus".to_string(), Value::Str(status.to_string())));
-    }
-    if let Some(on) = session.shuffle {
-        props.push(("Shuffle".to_string(), Value::Bool(on)));
-    }
-    if let Some(on) = session.repeat {
-        props.push(("LoopStatus".to_string(), Value::Str(if on { "Playlist" } else { "None" }.to_string())));
-    }
-    // The position was true at `updated_ms`; playing, it has moved on since.
-    let mut position = session.position.max(0.0);
-    if session.status == Some("Playing") && session.updated_ms > 0.0 {
-        position += ((now_ms - session.updated_ms) / 1000.0).max(0.0);
-    }
-    if session.duration > 0.0 {
-        position = position.min(session.duration);
-    }
-    props.push(("Position".to_string(), Value::Int((position * 1_000_000.0) as i64)));
-    props
-}
-
 // ── Artwork ───────────────────────────────────────────────────────────────────
 
 /// Where a cover may be read from. The URL comes from another program: only
@@ -524,9 +424,13 @@ fn emit_state(app: &AppHandle, state: &PlayerState) {
 /// screen: seeks made in Spotify's own window are never signalled).
 #[tauri::command]
 pub async fn spotify_refresh(app: AppHandle) -> Option<PlayerState> {
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(target_os = "linux")]
     {
-        tauri::async_runtime::spawn_blocking(move || client::refresh(&client::Out::App(app))).await.ok().flatten()
+        tauri::async_runtime::spawn_blocking(move || linux::refresh(&linux::Out::App(app))).await.ok().flatten()
+    }
+    #[cfg(windows)]
+    {
+        tauri::async_runtime::spawn_blocking(move || win::refresh(&app)).await.ok().flatten()
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
@@ -536,13 +440,16 @@ pub async fn spotify_refresh(app: AppHandle) -> Option<PlayerState> {
 }
 
 /// A control from the card or the pill: `playPause`, `next`, `previous`,
-/// `seek` (seconds), `shuffle` / `repeat` (1 on, 0 off), `volume` (0…100,
-/// Linux only).
+/// `seek` (seconds), `shuffle` / `repeat` (1 on, 0 off), `volume` (0…100).
 #[tauri::command]
 pub async fn spotify_control(app: AppHandle, action: String, value: Option<f64>) -> bool {
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(target_os = "linux")]
     {
-        tauri::async_runtime::spawn_blocking(move || client::control(&client::Out::App(app), &action, value)).await.unwrap_or(false)
+        tauri::async_runtime::spawn_blocking(move || linux::control(&linux::Out::App(app), &action, value)).await.unwrap_or(false)
+    }
+    #[cfg(windows)]
+    {
+        tauri::async_runtime::spawn_blocking(move || win::control(&app, &action, value)).await.unwrap_or(false)
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
@@ -555,9 +462,13 @@ pub async fn spotify_control(app: AppHandle, action: String, value: Option<f64>)
 /// download page. True when Spotify was reached or started.
 #[tauri::command]
 pub async fn spotify_open() -> bool {
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(target_os = "linux")]
     {
-        tauri::async_runtime::spawn_blocking(client::open).await.unwrap_or(false)
+        tauri::async_runtime::spawn_blocking(linux::open).await.unwrap_or(false)
+    }
+    #[cfg(windows)]
+    {
+        tauri::async_runtime::spawn_blocking(win::open).await.unwrap_or(false)
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
@@ -568,9 +479,13 @@ pub async fn spotify_open() -> bool {
 /// For Settings: whether there is a Spotify to launch.
 #[tauri::command]
 pub fn spotify_installed() -> bool {
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(target_os = "linux")]
     {
-        client::installed()
+        linux::installed()
+    }
+    #[cfg(windows)]
+    {
+        win::installed()
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
@@ -581,16 +496,14 @@ pub fn spotify_installed() -> bool {
 /// Starts the listener when the pill is declared, stops it when it is not.
 /// Called at launch and after every settings save.
 pub fn sync(app: &AppHandle, active_integrations: &[String]) {
-    #[cfg(any(target_os = "linux", windows))]
-    client::sync(app, active_integrations.iter().any(|id| id == PILL_ID));
+    let on = active_integrations.iter().any(|id| id == PILL_ID);
+    #[cfg(target_os = "linux")]
+    linux::sync(app, on);
+    #[cfg(windows)]
+    win::sync(app, on);
     #[cfg(not(any(target_os = "linux", windows)))]
-    let _ = (app, active_integrations);
+    let _ = (app, on);
 }
-
-#[cfg(target_os = "linux")]
-use self::linux as client;
-#[cfg(windows)]
-use self::windows as client;
 
 // ── Linux: MPRIS over D-Bus ───────────────────────────────────────────────────
 
@@ -1426,36 +1339,99 @@ mod linux {
     }
 }
 
-// ── Windows: the system's media sessions ──────────────────────────────────────
+// ── Windows: the system media controls ────────────────────────────────────────
+//
+// Spotify for Windows publishes what it plays to the system media transport
+// controls (the overlay the media keys show). Windows hands that session to
+// any app through GlobalSystemMediaTransportControlsSessionManager: track,
+// thumbnail, status, timeline, shuffle and repeat as properties with change
+// events, and play/pause, skip, seek, shuffle and repeat as requests. The
+// volume isn't part of it; it is Spotify's own volume in the Windows mixer
+// (Core Audio), read whenever the rest is.
+
+/// The media session ids Spotify registers: "Spotify.exe" (the installer from
+/// spotify.com) or "SpotifyAB.SpotifyMusic_…!Spotify" (the Microsoft Store).
+pub fn is_spotify_app(app_id: &str) -> bool {
+    app_id.to_ascii_lowercase().contains("spotify")
+}
+
+/// Windows durations and timeline positions: 100 ns ticks → seconds.
+pub fn ticks_to_secs(ticks: i64) -> f64 {
+    ticks.max(0) as f64 / 10_000_000.0
+}
+
+/// A Windows DateTime (100 ns ticks since 1601) → Unix milliseconds. Zero is
+/// "never updated".
+pub fn windows_time_to_unix_ms(universal: i64) -> Option<f64> {
+    const UNIX_EPOCH_TICKS: i64 = 116_444_736_000_000_000;
+    (universal > 0).then(|| (universal - UNIX_EPOCH_TICKS) as f64 / 10_000.0)
+}
+
+/// What the media session says about the track → the track, or None when
+/// nothing is loaded. Windows gives no Spotify URI, so the id is made from the
+/// tags; an ad comes with a title and nothing else, and gets an ad id so the
+/// page treats it as the Mac does.
+pub fn windows_track(title: &str, artist: &str, album: &str, duration: f64) -> Option<Track> {
+    let title = title.trim();
+    if title.is_empty() {
+        return None;
+    }
+    let artist = artist.trim();
+    let album = album.trim();
+    let kind = if artist.is_empty() && album.is_empty() { "ad" } else { "track" };
+    // FNV-1a: a short, stable id for the same tags.
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in [artist, album, title].join("\u{1f}").bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    Some(Track {
+        id: format!("spotify:{kind}:{hash:016x}"),
+        title: short_title(title),
+        artist: short_artist(artist),
+        album: album.to_string(),
+        duration: duration.max(0.0),
+        // Not a URL: the thumbnail is read from the session itself. The page
+        // only uses it to match a cover to its track.
+        art_url: Some(format!("smtc:{hash:016x}")),
+        object_path: String::new(),
+    })
+}
 
 #[cfg(windows)]
-mod windows {
+mod win {
     use super::*;
+    use std::collections::VecDeque;
     use std::path::PathBuf;
-    use std::process::{Command, Stdio};
     use std::sync::mpsc::{self, Receiver, Sender};
     use std::sync::{LazyLock, Mutex};
 
-    use ::windows::Foundation::TypedEventHandler;
-    use ::windows::Media::Control::{
-        GlobalSystemMediaTransportControlsSession as MediaSession,
-        GlobalSystemMediaTransportControlsSessionManager as SessionManager,
+    use windows::core::Interface;
+    use windows::Foundation::TypedEventHandler;
+    use windows::Media::Control::{
+        GlobalSystemMediaTransportControlsSession as Session,
+        GlobalSystemMediaTransportControlsSessionManager as Manager,
         GlobalSystemMediaTransportControlsSessionMediaProperties as MediaProperties,
-        GlobalSystemMediaTransportControlsSessionPlaybackStatus as PlaybackStatus,
+        GlobalSystemMediaTransportControlsSessionPlaybackStatus as Status,
     };
-    use ::windows::Media::MediaPlaybackAutoRepeatMode;
-    use ::windows::Storage::Streams::DataReader;
-    use tauri::Emitter;
+    use windows::Media::MediaPlaybackAutoRepeatMode;
+    use windows::Storage::Streams::DataReader;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Media::Audio::{
+        eMultimedia, eRender, IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator, ISimpleAudioVolume,
+        MMDeviceEnumerator,
+    };
+    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED};
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
 
-    /// What gets the listener off its channel.
+    /// What wakes the listener.
     enum Wake {
-        /// A media session came or went: Spotify started, or quit.
+        /// The session's track, status or timeline moved.
+        Changed,
+        /// A player appeared or went away: find Spotify's session again.
         Sessions,
-        /// The track, or its cover.
-        Media,
-        /// The status, shuffle, repeat or the timeline.
-        Player,
-        /// The pill is off.
         Stop,
     }
 
@@ -1463,72 +1439,21 @@ mod windows {
         /// Bumped on every start and stop: a listener from an older one quits.
         generation: u64,
         active: bool,
-        /// The listener's channel, to wake it when it has to stop.
-        listener: Option<Sender<Wake>>,
-        /// The player as the island was last told.
+        wake: Option<Sender<Wake>>,
         state: PlayerState,
-        /// The loaded track's cover: what it goes by (the track's `art_url`)
-        /// and its data URL.
-        art: Option<(String, String)>,
     }
 
-    static SHARED: LazyLock<Mutex<Shared>> = LazyLock::new(|| {
-        Mutex::new(Shared { generation: 0, active: false, listener: None, state: PlayerState::default(), art: None })
-    });
+    static SHARED: LazyLock<Mutex<Shared>> =
+        LazyLock::new(|| Mutex::new(Shared { generation: 0, active: false, wake: None, state: PlayerState::default() }));
 
-    /// Where the listener's news goes (the Linux client's has a test side too).
-    #[derive(Clone)]
-    pub enum Out {
-        App(AppHandle),
-    }
+    /// Covers already read, by the track's art key; the newest last.
+    static ART: LazyLock<Mutex<VecDeque<(String, String)>>> = LazyLock::new(|| Mutex::new(VecDeque::new()));
 
-    impl Out {
-        fn state(&self, state: &PlayerState) {
-            let Out::App(app) = self;
-            emit_state(app, state);
-        }
-
-        fn artwork(&self, art_url: &str, data_url: &str) {
-            let Out::App(app) = self;
-            let _ = app.emit_to(
-                crate::island::WINDOW_LABEL,
-                ARTWORK_EVENT,
-                Artwork { art_url: art_url.to_string(), data_url: data_url.to_string() },
-            );
-        }
-    }
-
-    // ── Start / stop ──────────────────────────────────────────────────────────
-
-    pub fn sync(app: &AppHandle, on: bool) {
-        let out = Out::App(app.clone());
-        let (generation, stop, start, state) = {
-            let mut s = SHARED.lock().unwrap();
-            if s.active == on {
-                return;
-            }
-            s.active = on;
-            s.generation += 1;
-            s.state = PlayerState { installed: installed(), ..PlayerState::default() };
-            s.art = None;
-            let stop = s.listener.take();
-            let start = on.then(mpsc::channel::<Wake>);
-            s.listener = start.as_ref().map(|(tx, _)| tx.clone());
-            (s.generation, stop, start, s.state.clone())
-        };
-        if let Some(stop) = stop {
-            let _ = stop.send(Wake::Stop);
-        }
-        match start {
-            Some((tx, rx)) => {
-                let spawned = std::thread::Builder::new()
-                    .name("coucou-spotify".into())
-                    .spawn(move || listen(out, generation, tx, rx));
-                if let Err(err) = spawned {
-                    crate::log::line(format!("spotify: no listener thread: {err}"));
-                }
-            }
-            None => out.state(&state),
+    /// WinRT and Core Audio need COM on the calling thread. A thread that has it
+    /// already, in either model, keeps it.
+    fn com() {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
         }
     }
 
@@ -1537,77 +1462,52 @@ mod windows {
         s.active && s.generation == generation
     }
 
-    // ── The listener ──────────────────────────────────────────────────────────
+    // ── Start / stop ──────────────────────────────────────────────────────────
 
-    /// Spotify's session and what was registered on it.
-    struct Attached {
-        session: MediaSession,
-        media: Option<i64>,
-        playback: Option<i64>,
-        timeline: Option<i64>,
-    }
-
-    fn manager() -> Option<SessionManager> {
-        SessionManager::RequestAsync().ok()?.get().ok()
-    }
-
-    fn spotify_session(manager: &SessionManager) -> Option<MediaSession> {
-        manager.GetSessions().ok()?.into_iter().find(|session| {
-            session.SourceAppUserModelId().map(|id| is_spotify_app(&id.to_string_lossy())).unwrap_or(false)
-        })
-    }
-
-    /// Finds Spotify's session and has its changes wake the listener.
-    fn attach(manager: &SessionManager, tx: &Sender<Wake>) -> Option<Attached> {
-        let session = spotify_session(manager)?;
-        let media = {
-            let tx = tx.clone();
-            session
-                .MediaPropertiesChanged(&TypedEventHandler::new(move |_, _| {
-                    let _ = tx.send(Wake::Media);
-                    Ok(())
-                }))
-                .ok()
+    pub fn sync(app: &AppHandle, on: bool) {
+        let (tx, rx) = mpsc::channel();
+        let (old, generation, state) = {
+            let mut s = SHARED.lock().unwrap();
+            if s.active == on {
+                return;
+            }
+            s.active = on;
+            s.generation += 1;
+            s.state = PlayerState { installed: installed(), ..PlayerState::default() };
+            let old = s.wake.take();
+            if on {
+                s.wake = Some(tx.clone());
+            }
+            (old, s.generation, s.state.clone())
         };
-        let playback = {
-            let tx = tx.clone();
-            session
-                .PlaybackInfoChanged(&TypedEventHandler::new(move |_, _| {
-                    let _ = tx.send(Wake::Player);
-                    Ok(())
-                }))
-                .ok()
-        };
-        let timeline = {
-            let tx = tx.clone();
-            session
-                .TimelinePropertiesChanged(&TypedEventHandler::new(move |_, _| {
-                    let _ = tx.send(Wake::Player);
-                    Ok(())
-                }))
-                .ok()
-        };
-        Some(Attached { session, media, playback, timeline })
-    }
-
-    fn detach(attached: Attached) {
-        if let Some(token) = attached.media {
-            let _ = attached.session.RemoveMediaPropertiesChanged(token);
+        if let Some(old) = old {
+            let _ = old.send(Wake::Stop);
         }
-        if let Some(token) = attached.playback {
-            let _ = attached.session.RemovePlaybackInfoChanged(token);
-        }
-        if let Some(token) = attached.timeline {
-            let _ = attached.session.RemoveTimelinePropertiesChanged(token);
+        if on {
+            let app = app.clone();
+            let spawned = std::thread::Builder::new()
+                .name("coucou-spotify".into())
+                .spawn(move || listen(app, generation, tx, rx));
+            if let Err(err) = spawned {
+                crate::log::line(format!("spotify: no listener thread: {err}"));
+            }
+        } else {
+            emit_state(app, &state);
         }
     }
 
-    fn listen(out: Out, generation: u64, tx: Sender<Wake>, rx: Receiver<Wake>) {
-        let Some(manager) = manager() else {
-            crate::log::line("spotify: no media session manager");
-            return;
+    /// Waits on the session's events and tells the island what changed. Nothing
+    /// runs between events.
+    fn listen(app: AppHandle, generation: u64, tx: Sender<Wake>, rx: Receiver<Wake>) {
+        com();
+        let manager = match Manager::RequestAsync().and_then(|op| op.get()) {
+            Ok(m) => m,
+            Err(err) => {
+                crate::log::line(format!("spotify: no media sessions: {err}"));
+                return;
+            }
         };
-        let sessions = {
+        let sessions_token = {
             let tx = tx.clone();
             manager
                 .SessionsChanged(&TypedEventHandler::new(move |_, _| {
@@ -1616,175 +1516,270 @@ mod windows {
                 }))
                 .ok()
         };
-        // Spotify may have started before the pill was declared.
-        let mut attached = attach(&manager, &tx);
-        read(&out, generation, attached.as_ref().map(|a| &a.session), true, true);
 
-        while let Ok(wake) = rx.recv() {
-            // One read answers everything that is already waiting.
-            let mut stop = matches!(wake, Wake::Stop);
-            let mut sessions_changed = matches!(wake, Wake::Sessions);
-            let mut media_changed = matches!(wake, Wake::Media);
+        let mut bound: Option<Bound> = None;
+        let mut rebind = true;
+        while current(generation) {
+            if rebind {
+                if let Some(b) = bound.take() {
+                    b.unbind();
+                }
+                bound = find_session(&manager).and_then(|s| Bound::bind(s, &tx));
+                rebind = false;
+            }
+            read_and_emit(&app, generation, bound.as_ref().map(|b| &b.session));
+
+            // Events come in bursts (a new track moves everything): one read each.
+            let mut stop = false;
+            match rx.recv() {
+                Ok(Wake::Changed) => {}
+                Ok(Wake::Sessions) => rebind = true,
+                Ok(Wake::Stop) | Err(_) => stop = true,
+            }
             while let Ok(more) = rx.try_recv() {
                 match more {
+                    Wake::Changed => {}
+                    Wake::Sessions => rebind = true,
                     Wake::Stop => stop = true,
-                    Wake::Sessions => sessions_changed = true,
-                    Wake::Media => media_changed = true,
-                    Wake::Player => {}
                 }
             }
-            if stop || !current(generation) {
+            if stop {
                 break;
             }
-            if sessions_changed {
-                if let Some(old) = attached.take() {
-                    detach(old);
-                }
-                attached = attach(&manager, &tx);
-                media_changed = true;
-            }
-            read(&out, generation, attached.as_ref().map(|a| &a.session), media_changed, false);
         }
 
-        if let Some(old) = attached.take() {
-            detach(old);
+        if let Some(b) = bound {
+            b.unbind();
         }
-        if let Some(token) = sessions {
+        if let Some(token) = sessions_token {
             let _ = manager.RemoveSessionsChanged(token);
         }
     }
 
+    /// Spotify's session, with the event handlers that wake the listener.
+    struct Bound {
+        session: Session,
+        tokens: [Option<i64>; 3],
+    }
+
+    impl Bound {
+        fn bind(session: Session, tx: &Sender<Wake>) -> Option<Bound> {
+            let tokens = [
+                session.MediaPropertiesChanged(&wake_on(tx)).ok(),
+                session.PlaybackInfoChanged(&wake_on(tx)).ok(),
+                session.TimelinePropertiesChanged(&wake_on(tx)).ok(),
+            ];
+            Some(Bound { session, tokens })
+        }
+
+        fn unbind(self) {
+            let [media, playback, timeline] = self.tokens;
+            if let Some(t) = media {
+                let _ = self.session.RemoveMediaPropertiesChanged(t);
+            }
+            if let Some(t) = playback {
+                let _ = self.session.RemovePlaybackInfoChanged(t);
+            }
+            if let Some(t) = timeline {
+                let _ = self.session.RemoveTimelinePropertiesChanged(t);
+            }
+        }
+    }
+
+    /// A handler that wakes the listener, for any of the session's events.
+    fn wake_on<A: windows::core::RuntimeType + 'static>(tx: &Sender<Wake>) -> TypedEventHandler<Session, A> {
+        let tx = tx.clone();
+        TypedEventHandler::new(move |_, _| {
+            let _ = tx.send(Wake::Changed);
+            Ok(())
+        })
+    }
+
+    fn find_session(manager: &Manager) -> Option<Session> {
+        let sessions = manager.GetSessions().ok()?;
+        (0..sessions.Size().ok()?)
+            .filter_map(|i| sessions.GetAt(i).ok())
+            .find(|s| s.SourceAppUserModelId().is_ok_and(|id| is_spotify_app(&id.to_string_lossy())))
+    }
+
     // ── Reading ───────────────────────────────────────────────────────────────
 
-    fn seconds(ticks: i64) -> f64 {
-        ticks as f64 / 10_000_000.0
+    /// Everything the session says, as it is now.
+    struct Snapshot {
+        track: Option<Track>,
+        playing: bool,
+        position: f64,
+        /// When Windows last updated the position (Unix ms), if it says.
+        updated_at: Option<f64>,
+        shuffle: bool,
+        repeat: bool,
     }
 
-    /// The session as plain values, with the properties its cover is read from.
-    fn session_of(session: &MediaSession) -> Option<(Session, MediaProperties)> {
-        let media = session.TryGetMediaPropertiesAsync().ok()?.get().ok()?;
-        let info = session.GetPlaybackInfo().ok()?;
-        let status = info.PlaybackStatus().ok()?;
-        let status = if status == PlaybackStatus::Playing {
-            Some("Playing")
-        } else if status == PlaybackStatus::Paused {
-            Some("Paused")
-        } else if status == PlaybackStatus::Stopped || status == PlaybackStatus::Closed {
-            Some("Stopped")
-        } else {
-            None
-        };
-        let mut read = Session {
-            title: media.Title().map(|s| s.to_string_lossy()).unwrap_or_default(),
-            artist: media.Artist().map(|s| s.to_string_lossy()).unwrap_or_default(),
-            album: media.AlbumTitle().map(|s| s.to_string_lossy()).unwrap_or_default(),
-            has_cover: media.Thumbnail().is_ok(),
-            status,
-            shuffle: info.IsShuffleActive().and_then(|on| on.Value()).ok(),
+    fn snapshot(session: &Session) -> windows::core::Result<(Snapshot, MediaProperties)> {
+        let props = session.TryGetMediaPropertiesAsync()?.get()?;
+        let timeline = session.GetTimelineProperties()?;
+        let start = timeline.StartTime()?.Duration;
+        let duration = ticks_to_secs(timeline.EndTime()?.Duration - start);
+        let track = windows_track(
+            &props.Title()?.to_string_lossy(),
+            &props.Artist()?.to_string_lossy(),
+            &props.AlbumTitle()?.to_string_lossy(),
+            duration,
+        );
+        let info = session.GetPlaybackInfo()?;
+        let snapshot = Snapshot {
+            playing: info.PlaybackStatus()? == Status::Playing && track.is_some(),
+            track,
+            position: ticks_to_secs(timeline.Position()?.Duration - start),
+            updated_at: windows_time_to_unix_ms(timeline.LastUpdatedTime()?.UniversalTime),
+            shuffle: info.IsShuffleActive().and_then(|r| r.Value()).unwrap_or(false),
             repeat: info
                 .AutoRepeatMode()
-                .and_then(|mode| mode.Value())
-                .ok()
-                .map(|mode| mode != MediaPlaybackAutoRepeatMode::None),
-            ..Session::default()
+                .and_then(|r| r.Value())
+                .is_ok_and(|mode| mode != MediaPlaybackAutoRepeatMode::None),
         };
-        if let Ok(timeline) = session.GetTimelineProperties() {
-            let start = timeline.StartTime().map(|t| t.Duration).unwrap_or(0);
-            let end = timeline.EndTime().map(|t| t.Duration).unwrap_or(0);
-            let position = timeline.Position().map(|t| t.Duration).unwrap_or(0);
-            read.duration = seconds(end - start).max(0.0);
-            read.position = seconds(position - start).max(0.0);
-            // A session that never set its timeline says 1601.
-            read.updated_ms = timeline.LastUpdatedTime().map(|t| unix_ms(t.UniversalTime)).unwrap_or(0.0).max(0.0);
-        }
-        Some((read, media))
+        Ok((snapshot, props))
     }
 
-    /// Reads Spotify and tells the island when what it shows would change —
-    /// always when `tell`. `reread_cover` when the track or its cover may have
-    /// changed. None once the pill is off.
-    fn read(
-        out: &Out,
-        generation: u64,
-        session: Option<&MediaSession>,
-        reread_cover: bool,
-        tell: bool,
-    ) -> Option<PlayerState> {
-        let read = session.and_then(session_of);
-        let installed = session.is_some() || installed();
+    fn read_and_emit(app: &AppHandle, generation: u64, session: Option<&Session>) {
+        let read = session.and_then(|s| snapshot(s).ok());
+        let volume = read.as_ref().and_then(|_| spotify_volume());
         let now = now_ms();
-        let (state, changed) = {
+        let (state, props) = {
             let mut s = SHARED.lock().unwrap();
             if !(s.active && s.generation == generation) {
-                return None;
+                return;
             }
-            let mut next = s.state.clone();
-            next.running = session.is_some();
-            next.installed = installed;
-            match &read {
-                Some((session, _)) => {
-                    next.apply(&session_props(session, now), now);
+            let props = match read {
+                Some((snap, props)) => {
+                    s.state.running = true;
+                    s.state.installed = true;
+                    s.state.track = snap.track;
+                    s.state.playing = snap.playing;
+                    // The position was true when Windows last updated it; while
+                    // playing, the page runs it on from there.
+                    let at = snap.updated_at.filter(|&t| t <= now).unwrap_or(now);
+                    s.state.anchor(snap.position, at);
+                    s.state.shuffle = snap.shuffle;
+                    s.state.repeat = snap.repeat;
+                    if let Some(v) = volume {
+                        s.state.volume = v;
+                    }
+                    Some(props)
                 }
-                None => next.clear(now),
-            }
-            // Spotify moves its timeline along as it plays: the island already
-            // runs that clock, and is only told of what it couldn't guess.
-            let changed = tell || next.differs_from(&s.state, now);
-            if changed {
-                s.state = next;
-            }
-            (s.state.clone(), changed)
+                None => {
+                    s.state.running = false;
+                    s.state.installed = installed();
+                    s.state.clear(now);
+                    None
+                }
+            };
+            (s.state.clone(), props)
         };
-        if changed {
-            out.state(&state);
+        emit_state(app, &state);
+        if let (Some(props), Some(track)) = (props, state.track.as_ref()) {
+            artwork(app, track, &props);
         }
-        let art_url = state.track.as_ref().and_then(|t| t.art_url.clone());
-        if let (Some(art_url), Some((_, media))) = (art_url, &read) {
-            cover(out, generation, &art_url, media, reread_cover, tell);
-        }
-        Some(state)
     }
 
-    /// The track's cover, read from the session when it may be new, and sent
-    /// when it is — or again when `resend` (the page asked for everything).
-    fn cover(out: &Out, generation: u64, art_url: &str, media: &MediaProperties, reread: bool, resend: bool) {
-        let cached = SHARED.lock().unwrap().art.clone().filter(|(url, _)| url == art_url).map(|(_, data)| data);
-        let fresh = if reread || cached.is_none() { thumbnail(media).as_deref().and_then(data_url) } else { None };
-        let data = match (fresh, cached) {
-            (Some(fresh), cached) => {
-                if !resend && cached.as_deref() == Some(fresh.as_str()) {
-                    return;
+    // ── Artwork ───────────────────────────────────────────────────────────────
+
+    /// The track's cover, as a data URL (the page may not load anything
+    /// remote). Read once per track; Spotify sometimes adds the thumbnail a
+    /// moment after the title, and the next event brings it then.
+    fn artwork(app: &AppHandle, track: &Track, props: &MediaProperties) {
+        use tauri::Emitter;
+        let Some(key) = track.art_url.clone() else { return };
+        let cached = ART.lock().unwrap().iter().find(|(k, _)| *k == key).map(|(_, d)| d.clone());
+        let data = match cached {
+            Some(data) => data,
+            None => {
+                let Some(data) = thumbnail(props).as_deref().and_then(data_url) else { return };
+                let mut art = ART.lock().unwrap();
+                art.push_back((key.clone(), data.clone()));
+                while art.len() > 12 {
+                    art.pop_front();
                 }
-                let mut s = SHARED.lock().unwrap();
-                if !(s.active && s.generation == generation) {
-                    return;
-                }
-                s.art = Some((art_url.to_string(), fresh.clone()));
-                fresh
+                data
             }
-            (None, Some(cached)) if resend => cached,
-            _ => return,
         };
-        out.artwork(art_url, &data);
+        let _ = app.emit_to(crate::island::WINDOW_LABEL, ARTWORK_EVENT, Artwork { art_url: key, data_url: data });
     }
 
-    /// The cover's bytes, as Windows holds them: nothing is fetched.
-    fn thumbnail(media: &MediaProperties) -> Option<Vec<u8>> {
-        let stream = media.Thumbnail().ok()?.OpenReadAsync().ok()?.get().ok()?;
-        let size = usize::try_from(stream.Size().ok()?).ok()?;
-        if size == 0 || size > ARTWORK_LIMIT {
+    fn thumbnail(props: &MediaProperties) -> Option<Vec<u8>> {
+        let stream = props.Thumbnail().ok()?.OpenReadAsync().ok()?.get().ok()?;
+        let size = stream.Size().ok()?;
+        if size == 0 || size > ARTWORK_LIMIT as u64 {
             return None;
         }
         let reader = DataReader::CreateDataReader(&stream).ok()?;
-        let loaded = reader.LoadAsync(size as u32).ok()?.get().ok()? as usize;
-        let mut bytes = vec![0u8; loaded.min(size)];
+        let loaded = reader.LoadAsync(size as u32).ok()?.get().ok()?;
+        let mut bytes = vec![0u8; loaded as usize];
         reader.ReadBytes(&mut bytes).ok()?;
         Some(bytes)
     }
 
+    // ── Volume: Spotify in the Windows mixer ──────────────────────────────────
+
+    /// Spotify's audio sessions on the default output.
+    fn spotify_audio() -> Vec<ISimpleAudioVolume> {
+        com();
+        let mut out = Vec::new();
+        unsafe {
+            let Ok(devices) = CoCreateInstance::<_, IMMDeviceEnumerator>(&MMDeviceEnumerator, None, CLSCTX_ALL) else {
+                return out;
+            };
+            let Ok(device) = devices.GetDefaultAudioEndpoint(eRender, eMultimedia) else { return out };
+            let Ok(manager) = device.Activate::<IAudioSessionManager2>(CLSCTX_ALL, None) else { return out };
+            let Ok(sessions) = manager.GetSessionEnumerator() else { return out };
+            for i in 0..sessions.GetCount().unwrap_or(0) {
+                let Ok(control) = sessions.GetSession(i) else { continue };
+                let Ok(control) = control.cast::<IAudioSessionControl2>() else { continue };
+                let pid = control.GetProcessId().unwrap_or(0);
+                if pid != 0 && is_spotify_process(pid) {
+                    if let Ok(volume) = control.cast::<ISimpleAudioVolume>() {
+                        out.push(volume);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    fn is_spotify_process(pid: u32) -> bool {
+        unsafe {
+            let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return false };
+            let mut buf = [0u16; 1024];
+            let mut len = buf.len() as u32;
+            let named = QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, windows::core::PWSTR(buf.as_mut_ptr()), &mut len);
+            let _ = CloseHandle(process);
+            if named.is_err() {
+                return false;
+            }
+            let path = String::from_utf16_lossy(&buf[..len as usize]);
+            path.rsplit(['\\', '/']).next().is_some_and(|name| name.eq_ignore_ascii_case("spotify.exe"))
+        }
+    }
+
+    /// 0…100, or None while Spotify has no audio session (nothing played yet).
+    fn spotify_volume() -> Option<i32> {
+        let level = unsafe { spotify_audio().first()?.GetMasterVolume().ok()? };
+        Some((level * 100.0).round().clamp(0.0, 100.0) as i32)
+    }
+
+    fn set_spotify_volume(percent: f64) -> bool {
+        let level = (percent / 100.0).clamp(0.0, 1.0) as f32;
+        let sessions = spotify_audio();
+        let mut done = false;
+        for volume in &sessions {
+            done |= unsafe { volume.SetMasterVolume(level, std::ptr::null()).is_ok() };
+        }
+        done
+    }
+
     // ── Commands ──────────────────────────────────────────────────────────────
 
-    pub fn refresh(out: &Out) -> Option<PlayerState> {
+    pub fn refresh(app: &AppHandle) -> Option<PlayerState> {
         let generation = {
             let s = SHARED.lock().unwrap();
             if !s.active {
@@ -1792,82 +1787,97 @@ mod windows {
             }
             s.generation
         };
-        let session = manager().and_then(|m| spotify_session(&m));
-        read(out, generation, session.as_ref(), false, true)
+        com();
+        let manager = Manager::RequestAsync().and_then(|op| op.get()).ok();
+        let session = manager.as_ref().and_then(find_session);
+        read_and_emit(app, generation, session.as_ref());
+        let s = SHARED.lock().unwrap();
+        (s.active && s.generation == generation).then(|| s.state.clone())
     }
 
-    pub fn control(out: &Out, action: &str, value: Option<f64>) -> bool {
-        let (active, state) = {
+    pub fn control(app: &AppHandle, action: &str, value: Option<f64>) -> bool {
+        let state = {
             let s = SHARED.lock().unwrap();
-            (s.active && s.state.running, s.state.clone())
-        };
-        if !active {
-            return false;
-        }
-        let Some(session) = manager().and_then(|m| spotify_session(&m)) else { return false };
-        let v = value.unwrap_or(0.0);
-        let seek_to = state.track.as_ref().map(|t| v.clamp(0.0, (t.duration - 1.0).max(0.0)));
-        let asked = match action {
-            "playPause" => session.TryTogglePlayPauseAsync(),
-            "next" => session.TrySkipNextAsync(),
-            "previous" => session.TrySkipPreviousAsync(),
-            "seek" => {
-                let Some(target) = seek_to else { return false };
-                session.TryChangePlaybackPositionAsync((target * 10_000_000.0) as i64)
+            if !(s.active && s.state.running) {
+                return false;
             }
-            "shuffle" => session.TryChangeShuffleActiveAsync(v != 0.0),
-            "repeat" => session.TryChangeAutoRepeatModeAsync(if v != 0.0 {
+            s.state.clone()
+        };
+        com();
+        let Some(session) = Manager::RequestAsync().and_then(|op| op.get()).ok().and_then(|m| find_session(&m)) else {
+            return false;
+        };
+        let v = value.unwrap_or(0.0);
+        // A request Windows passed on, and the player said yes to.
+        macro_rules! asked {
+            ($op:expr) => {
+                $op.and_then(|op| op.get()).unwrap_or(false)
+            };
+        }
+        let seek_to = state.track.as_ref().map(|t| v.clamp(0.0, (t.duration - 1.0).max(0.0)));
+        let done = match action {
+            "playPause" => asked!(session.TryTogglePlayPauseAsync()),
+            "next" => asked!(session.TrySkipNextAsync()),
+            "previous" => asked!(session.TrySkipPreviousAsync()),
+            "seek" => match (seek_to, session.GetTimelineProperties().and_then(|t| t.StartTime())) {
+                (Some(target), Ok(start)) => {
+                    asked!(session.TryChangePlaybackPositionAsync(start.Duration + (target * 10_000_000.0) as i64))
+                }
+                _ => false,
+            },
+            "shuffle" => asked!(session.TryChangeShuffleActiveAsync(v != 0.0)),
+            "repeat" => asked!(session.TryChangeAutoRepeatModeAsync(if v != 0.0 {
                 MediaPlaybackAutoRepeatMode::List
             } else {
                 MediaPlaybackAutoRepeatMode::None
-            }),
-            // A media session has no volume, and nothing else is known.
-            _ => return false,
+            })),
+            "volume" => set_spotify_volume(v),
+            _ => false,
         };
-        if !asked.and_then(|op| op.get()).unwrap_or(false) {
+        if !done {
             return false;
         }
-        // Spotify doesn't always signal these: show them at once, as the Mac does.
-        let optimistic: Option<(String, Value)> = match action {
-            "seek" => seek_to.map(|target| ("Position".into(), Value::Int((target * 1_000_000.0) as i64))),
-            "shuffle" => Some(("Shuffle".into(), Value::Bool(v != 0.0))),
-            "repeat" => Some(("LoopStatus".into(), Value::Str(if v != 0.0 { "Playlist" } else { "None" }.into()))),
-            _ => None,
-        };
-        if let Some(prop) = optimistic {
+        // Show these at once, as the Mac does; the session's events confirm them.
+        let optimistic = matches!(action, "seek" | "shuffle" | "repeat" | "volume");
+        if optimistic {
             let state = {
                 let mut s = SHARED.lock().unwrap();
-                s.state.apply(&[prop], now_ms());
+                match action {
+                    "seek" => {
+                        if let Some(target) = seek_to {
+                            s.state.anchor(target, now_ms());
+                        }
+                    }
+                    "shuffle" => s.state.shuffle = v != 0.0,
+                    "repeat" => s.state.repeat = v != 0.0,
+                    _ => s.state.volume = v.round().clamp(0.0, 100.0) as i32,
+                }
                 s.state.clone()
             };
-            out.state(&state);
+            emit_state(app, &state);
         }
         true
     }
 
     // ── Launching ─────────────────────────────────────────────────────────────
 
-    /// How to start Spotify: its own installer's copy, else the Microsoft
-    /// Store app's alias.
-    fn launcher() -> Option<PathBuf> {
-        let own = std::env::var_os("APPDATA").map(|dir| PathBuf::from(dir).join("Spotify").join("Spotify.exe"));
-        let store = std::env::var_os("LOCALAPPDATA")
-            .map(|dir| PathBuf::from(dir).join("Microsoft").join("WindowsApps").join("Spotify.exe"));
-        // The alias is a reparse point: it is there, but nothing `is_file` can follow.
-        [own, store].into_iter().flatten().find(|path| path.symlink_metadata().is_ok())
-    }
-
+    /// The installer's copy, or the Microsoft Store's (its app alias).
     pub fn installed() -> bool {
-        launcher().is_some()
+        let under = |var: &str, rest: &str| std::env::var_os(var).map(|base| PathBuf::from(base).join(rest));
+        let desktop = under("APPDATA", r"Spotify\Spotify.exe").is_some_and(|p| p.is_file());
+        // An app execution alias is a reparse point that is_file() can't open.
+        let store = under("LOCALAPPDATA", r"Microsoft\WindowsApps\Spotify.exe")
+            .is_some_and(|p| std::fs::symlink_metadata(p).is_ok());
+        desktop || store
     }
 
+    /// Spotify's URI scheme brings it forward, or starts it. Without Spotify,
+    /// its download page.
     pub fn open() -> bool {
-        // A second Spotify brings the running one forward.
-        if let Some(exe) = launcher() {
-            match Command::new(&exe).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
-                Ok(_) => return true,
-                Err(err) => crate::log::line(format!("spotify: could not start it: {err}")),
-            }
+        let running = SHARED.lock().unwrap().state.running;
+        if running || installed() {
+            crate::platform::open_url("spotify:");
+            return true;
         }
         crate::platform::open_url(DOWNLOAD_URL);
         false
@@ -2059,142 +2069,38 @@ mod tests {
         assert_eq!(data_url(&[0xFF, 0xD8, 0xFF]).as_deref(), Some("data:image/jpeg;base64,/9j/"));
     }
 
-    // ── Windows: a media session read as MPRIS properties ─────────────────────
-
-    fn session() -> Session {
-        Session {
-            title: "beside you - Remastered".into(),
-            artist: "keshi".into(),
-            album: "beside you".into(),
-            has_cover: true,
-            status: Some("Playing"),
-            shuffle: Some(true),
-            repeat: Some(false),
-            position: 78.0,
-            duration: 166.0,
-            updated_ms: 10_000.0,
-        }
-    }
-
     #[test]
-    fn spotify_is_told_from_the_other_media_sessions() {
+    fn windows_media_sessions_of_spotify_are_recognised() {
         assert!(is_spotify_app("Spotify.exe"));
         assert!(is_spotify_app("SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify"));
+        assert!(!is_spotify_app("Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic"));
         assert!(!is_spotify_app("chrome.exe"));
-        assert!(!is_spotify_app("NotSpotify.exe"));
-        assert!(!is_spotify_app(""));
     }
 
     #[test]
-    fn a_windows_session_becomes_the_same_player_state() {
-        let mut state = PlayerState::default();
-        // Read 2.5 s after Spotify last said where it was.
-        let applied = state.apply(&session_props(&session(), 12_500.0), 12_500.0);
-        assert!(applied.track_changed && applied.status_changed && applied.position_set);
-        let track = state.track.clone().unwrap();
-        assert_eq!(track.title, "beside you");
-        assert_eq!(track.artist, "keshi");
-        assert_eq!(track.album, "beside you");
-        assert_eq!(track.duration, 166.0);
-        assert!(track.id.starts_with("spotify:windows:"));
-        // The cover goes by the track's id: there is no URL to fetch.
-        assert_eq!(track.art_url.as_deref(), Some(track.id.as_str()));
-        assert!(state.playing && state.shuffle && !state.repeat);
-        assert_eq!(state.position, 80.5);
-        assert_eq!(state.position_at, 12_500.0);
-
-        // Paused, the position is where Spotify left it, however long ago.
-        let paused = Session { status: Some("Paused"), ..session() };
-        state.apply(&session_props(&paused, 900_000.0), 900_000.0);
-        assert!(!state.playing);
-        assert_eq!(state.position, 78.0);
-
-        // Another track has another id; no cover, no key for one.
-        let other = Session { title: "limbo".into(), has_cover: false, ..session() };
-        let applied = state.apply(&session_props(&other, 900_000.0), 900_000.0);
-        assert!(applied.track_changed);
-        assert_eq!(state.track.as_ref().unwrap().art_url, None);
+    fn windows_times_become_seconds_and_unix_ms() {
+        assert_eq!(ticks_to_secs(2_150_000_000), 215.0);
+        assert_eq!(ticks_to_secs(-5), 0.0);
+        // 2023-11-14T22:13:20Z, as Windows and as Unix counts it.
+        assert_eq!(windows_time_to_unix_ms(133_444_736_000_000_000), Some(1_700_000_000_000.0));
+        assert_eq!(windows_time_to_unix_ms(0), None);
     }
 
     #[test]
-    fn a_windows_position_never_runs_past_the_end_or_from_no_time() {
-        let mut state = PlayerState::default();
-        // Long after the last update: capped at the track's length.
-        state.apply(&session_props(&session(), 10_000_000.0), 10_000_000.0);
-        assert_eq!(state.position, 166.0);
-        // Spotify gave no time: the position as it is.
-        let untimed = Session { updated_ms: 0.0, ..session() };
-        state.apply(&session_props(&untimed, 10_000_000.0), 10_000_000.0);
-        assert_eq!(state.position, 78.0);
-        // A clock behind the update never moves it back.
-        state.apply(&session_props(&session(), 5_000.0), 5_000.0);
-        assert_eq!(state.position, 78.0);
-    }
-
-    #[test]
-    fn a_windows_session_between_two_states_keeps_the_last_one() {
-        let mut state = PlayerState::default();
-        state.apply(&session_props(&session(), 10_000.0), 10_000.0);
-        let changing = Session { status: None, shuffle: None, repeat: None, ..session() };
-        let applied = state.apply(&session_props(&changing, 11_000.0), 11_000.0);
-        assert!(!applied.status_changed);
-        assert!(state.playing && state.shuffle);
-
-        // Nothing loaded: no track, and nothing plays.
-        let empty = Session { status: Some("Paused"), ..Session::default() };
-        state.apply(&session_props(&empty, 12_000.0), 12_000.0);
-        assert_eq!(state.track, None);
-        assert!(!state.playing);
-
-        let stopped = Session { status: Some("Stopped"), ..session() };
-        state.apply(&session_props(&stopped, 13_000.0), 13_000.0);
-        assert_eq!(state.track, None);
-    }
-
-    #[test]
-    fn a_windows_ad_gets_the_ad_id() {
-        let ad = Session { title: "Advertisement".into(), artist: String::new(), album: String::new(), ..session() };
-        let mut state = PlayerState::default();
-        state.apply(&session_props(&ad, 10_000.0), 10_000.0);
-        assert!(state.track.unwrap().id.starts_with("spotify:ad:"));
-        // A song called that, by someone, is a song.
-        let song = Session { title: "Advertisement".into(), album: String::new(), ..session() };
-        let mut state = PlayerState::default();
-        state.apply(&session_props(&song, 10_000.0), 10_000.0);
-        assert!(state.track.unwrap().id.starts_with("spotify:windows:"));
-    }
-
-    #[test]
-    fn windows_times_become_unix_milliseconds() {
-        // 1970-01-01 and 2026-10-13T00:00:00Z, in 100 ns ticks since 1601.
-        assert_eq!(unix_ms(116_444_736_000_000_000), 0.0);
-        assert_eq!(unix_ms(134_363_232_000_000_000), 1_791_849_600_000.0);
-        assert!(unix_ms(0) < 0.0);
-    }
-
-    #[test]
-    fn the_island_is_told_of_changes_but_not_of_the_clock() {
-        let mut shown = PlayerState { running: true, installed: true, ..PlayerState::default() };
-        shown.apply(&session_props(&session(), 10_000.0), 10_000.0);
-        // Spotify's next timeline update, 5 s on: where the clock already is.
-        let mut next = shown.clone();
-        let later = Session { position: 83.0, updated_ms: 15_000.0, ..session() };
-        next.apply(&session_props(&later, 15_200.0), 15_200.0);
-        assert!(!next.differs_from(&shown, 15_200.0));
-        // A seek is somewhere the clock isn't.
-        let mut next = shown.clone();
-        let seeked = Session { position: 20.0, updated_ms: 15_000.0, ..session() };
-        next.apply(&session_props(&seeked, 15_200.0), 15_200.0);
-        assert!(next.differs_from(&shown, 15_200.0));
-        // So are a pause, shuffle, and Spotify quitting.
-        let mut next = shown.clone();
-        next.apply(&session_props(&Session { status: Some("Paused"), ..session() }, 15_200.0), 15_200.0);
-        assert!(next.differs_from(&shown, 15_200.0));
-        let mut next = shown.clone();
-        next.apply(&session_props(&Session { shuffle: Some(false), ..session() }, 10_000.0), 10_000.0);
-        assert!(next.differs_from(&shown, 10_000.0));
-        let mut next = shown.clone();
-        next.running = false;
-        assert!(next.differs_from(&shown, 10_000.0));
+    fn windows_tags_become_the_track() {
+        let t = windows_track("Song - Remastered 2011", "Artist feat. Someone", "Album", 215.0).unwrap();
+        assert_eq!(t.title, "Song");
+        assert_eq!(t.artist, "Artist");
+        assert_eq!(t.album, "Album");
+        assert_eq!(t.duration, 215.0);
+        assert!(t.id.starts_with("spotify:track:"));
+        // The same tags give the same track, and the cover key follows it.
+        let again = windows_track("Song - Remastered 2011", "Artist feat. Someone", "Album", 215.0).unwrap();
+        assert_eq!(t.id, again.id);
+        assert_eq!(t.art_url, again.art_url);
+        assert_ne!(t.id, windows_track("Other", "Artist", "Album", 1.0).unwrap().id);
+        // An ad is a title and nothing else.
+        assert!(windows_track("Spotify", "", "", 30.0).unwrap().id.starts_with("spotify:ad:"));
+        assert_eq!(windows_track("  ", "Artist", "Album", 1.0), None);
     }
 }

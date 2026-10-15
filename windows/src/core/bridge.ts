@@ -209,6 +209,7 @@ export const Bridge = {
   focusWindow: (focused: boolean) => call<void>("focus_window", { focused }),
 
   reposition: () => call<void>("reposition"),
+  fitZoom: (dpr: number) => call<boolean>("fit_zoom", { dpr }),
 
   /** Displays the island can be pinned to: `key` is what `settings.screen` stores. */
   listMonitors: () => call<{ key: string; label: string }[]>("list_monitors"),
@@ -418,7 +419,7 @@ export const Bridge = {
   // ── Spotify (src-tauri/src/spotify.rs) ────────────────────────────────────
   /** Reads the player again (the card came on screen) and reports it. */
   spotifyRefresh: () => call<SpotifyState | null>("spotify_refresh"),
-  /** True when Spotify took it. `value`: seconds for seek, 0/1 for shuffle and repeat, 0…100 for volume (Linux). */
+  /** True when Spotify took it. `value`: seconds for seek, 0/1 for shuffle and repeat, 0…100 for volume. */
   spotifyControl: (action: SpotifyAction, value?: number) =>
     call<boolean>("spotify_control", { action, value: value ?? null }),
   /** Brings Spotify forward or starts it; without it, its download page. */
