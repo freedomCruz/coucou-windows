@@ -38,6 +38,8 @@ export interface FlowPrefs {
   voice: boolean;
   voiceOutput: VoiceOutput;
   voiceGender: "female" | "male";
+  /** The model « OK Coucou » asks first; empty is Claude Haiku. */
+  voiceModel: string;
 }
 
 export type ModelState =

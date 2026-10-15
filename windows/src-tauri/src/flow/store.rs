@@ -107,6 +107,9 @@ pub struct Prefs {
     pub voice_output: String,
     /// The ElevenLabs voice: "female" or "male".
     pub voice_gender: String,
+    /// The model « OK Coucou » asks first; empty is Claude Haiku. Any model the
+    /// Claude endpoint offers (a gateway's Gemini, through Settings → Claude → Base URL).
+    pub voice_model: String,
 }
 
 impl Default for Prefs {
@@ -124,6 +127,7 @@ impl Default for Prefs {
             voice: false,
             voice_output: "system".into(),
             voice_gender: "female".into(),
+            voice_model: String::new(),
         }
     }
 }
@@ -388,5 +392,7 @@ mod tests {
         assert_eq!(p.key, FlowKey::RightAlt);
         assert_eq!(p.keep_days, 30);
         assert!(p.open_at_launch);
+        // OK Coucou's model: none chosen in a file from before it existed.
+        assert_eq!(p.voice_model, "");
     }
 }

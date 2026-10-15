@@ -388,7 +388,7 @@ fn process(app: &AppHandle, flow: &Arc<Flow>, samples: &[f32], front: Option<&(S
     let mut written = prepared.text.clone();
     if cleanup && style != store::Style::Verbatim && cleanup::has_key() {
         let app_name = front.map(|(_, n)| n.clone());
-        let cleaned = tauri::async_runtime::block_on(cleanup::clean(&prepared.text, style, app_name.as_deref(), &words));
+        let cleaned = tauri::async_runtime::block_on(cleanup::clean(&crate::claude::base_url(app), &prepared.text, style, app_name.as_deref(), &words));
         if text::keeps_marks(&cleaned, &prepared.snippets) {
             written = cleaned;
         }

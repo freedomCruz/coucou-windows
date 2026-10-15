@@ -524,10 +524,11 @@ fn summarize(app: &AppHandle, id: &str) {
         transcript.truncate(cut);
     }
     let user = format!("<transcript>\n{transcript}\n</transcript>");
+    let base_url = crate::claude::base_url(app);
     let reply = tauri::async_runtime::block_on(async {
-        match crate::claude::complete(&model, builder::SUMMARY_INSTRUCTIONS, &user, 2048, Duration::from_secs(120)).await {
+        match crate::claude::complete(&base_url, &model, builder::SUMMARY_INSTRUCTIONS, &user, 2048, Duration::from_secs(120)).await {
             Ok(text) => Some(text),
-            Err(_) => crate::claude::complete(crate::flow::cleanup::MODEL, builder::SUMMARY_INSTRUCTIONS, &user, 2048, Duration::from_secs(120))
+            Err(_) => crate::claude::complete(&base_url, crate::flow::cleanup::MODEL, builder::SUMMARY_INSTRUCTIONS, &user, 2048, Duration::from_secs(120))
                 .await
                 .ok(),
         }

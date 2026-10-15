@@ -28,6 +28,21 @@ pub struct Reply {
     pub acted: bool,
 }
 
+/// The models a turn tries, in order: the one picked for « OK Coucou » (else
+/// Claude Haiku), then the chat's, never the same one twice.
+fn models_to_try(chosen: &str, chat: &str) -> Vec<String> {
+    let first = match chosen.trim() {
+        "" => FAST_MODEL,
+        m => m,
+    };
+    let mut models = vec![first.to_string()];
+    let chat = chat.trim();
+    if !chat.is_empty() && chat != first {
+        models.push(chat.to_string());
+    }
+    models
+}
+
 fn tools() -> Vec<Value> {
     vec![
         json!({
@@ -117,18 +132,23 @@ impl Brain {
             .try_state::<crate::Shared>()
             .map(|s| s.settings.lock().unwrap().model.clone())
             .unwrap_or_default();
+        let chosen = crate::flow::get(app).map(|f| f.store.lock().unwrap().prefs.voice_model.clone()).unwrap_or_default();
+        let models = models_to_try(&chosen, &chat_model);
+        let base_url = crate::claude::base_url(app);
         let mut acted = false;
         let mut spoken = String::new();
         for _ in 0..5 {
             let turn = tauri::async_runtime::block_on(async {
-                match crate::claude::voice_turn(FAST_MODEL, &system, &self.messages, &tools).await {
-                    Ok(v) => Ok(v),
-                    Err(err) if !chat_model.is_empty() => {
-                        crate::log::line(format!("voice: {err}; the chat's model instead"));
-                        crate::claude::voice_turn(&chat_model, &system, &self.messages, &tools).await
+                let mut last = Err(String::new());
+                for (i, model) in models.iter().enumerate() {
+                    last = crate::claude::voice_turn(&base_url, model, &system, &self.messages, &tools).await;
+                    match &last {
+                        Ok(_) => break,
+                        Err(err) if i + 1 < models.len() => crate::log::line(format!("voice: {err}; {} instead", models[i + 1])),
+                        Err(_) => {}
                     }
-                    Err(err) => Err(err),
                 }
+                last
             });
             let turn = match turn {
                 Ok(t) => t,
@@ -211,6 +231,18 @@ pub fn spoken_text(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_models_tried_are_the_chosen_one_then_the_chat_s() {
+        // Nothing chosen: Haiku first, then the chat's model, as before.
+        assert_eq!(models_to_try("", "claude-opus-5"), ["claude-haiku-4-5", "claude-opus-5"]);
+        assert_eq!(models_to_try("", ""), ["claude-haiku-4-5"]);
+        // A model picked in OK Coucou's page (a gateway's Gemini, say) comes first, and Haiku is not tried.
+        assert_eq!(models_to_try("aveento/gemini-3-flash", "claude-sonnet-4-6"), ["aveento/gemini-3-flash", "claude-sonnet-4-6"]);
+        assert_eq!(models_to_try(" aveento/gemini-3-flash ", ""), ["aveento/gemini-3-flash"]);
+        // The same model is never asked twice.
+        assert_eq!(models_to_try("claude-sonnet-4-6", "claude-sonnet-4-6"), ["claude-sonnet-4-6"]);
+    }
 
     #[test]
     fn markdown_and_citations_are_not_read_aloud() {

@@ -4,11 +4,12 @@
 // Everything happens here rather than in the island: the API key never leaves
 // the credential store, and file bytes never cross the IPC boundary.
 //
-// COUCOU_ANTHROPIC_BASE_URL points the chat at an Anthropic-compatible gateway
-// instead (issue #180). Only that variable is read: Claude Code's own
-// ANTHROPIC_BASE_URL may name a proxy the user never meant to hand this key to.
+// The base URL in Settings → Claude, else COUCOU_ANTHROPIC_BASE_URL, points
+// the chat at an Anthropic-compatible gateway instead (issue #180). Only that
+// variable is read: Claude Code's own ANTHROPIC_BASE_URL may name a proxy the
+// user never meant to hand this key to.
 
-use std::sync::OnceLock;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use reqwest::Url;
@@ -32,28 +33,42 @@ const MAX_INLINE_TEXT: u64 = 200_000;
 
 pub const DEFAULT_MODEL: &str = "claude-opus-5";
 
-/// The Messages endpoint: Anthropic's, or the gateway in COUCOU_ANTHROPIC_BASE_URL.
-/// Read once; the gateway's host (never the key) goes to the log once.
-fn endpoint() -> Result<Url, String> {
-    static ENDPOINT: OnceLock<Result<Url, String>> = OnceLock::new();
-    ENDPOINT
-        .get_or_init(|| {
-            let raw = std::env::var(BASE_URL_VAR).ok().filter(|v| !v.trim().is_empty());
-            let resolved = match raw {
-                None => Ok(Url::parse(DEFAULT_ENDPOINT).expect("valid default endpoint")),
-                Some(raw) => net::anthropic_endpoint(&raw),
-            };
-            match &resolved {
-                Ok(url) if url.as_str() != DEFAULT_ENDPOINT => crate::log::line(format!(
-                    "chat: Claude requests go to {} ({BASE_URL_VAR})",
-                    net::host_for_log(url)
-                )),
-                Err(err) => crate::log::line(format!("chat: {err}")),
-                _ => {}
-            }
-            resolved
-        })
-        .clone()
+/// What errors call the base URL typed in Settings → Claude.
+pub const BASE_URL_SETTING: &str = "The base URL";
+
+/// The Messages endpoint for the base URL in Settings → Claude (`setting`).
+pub fn setting_endpoint(setting: &str) -> Result<Url, String> {
+    net::anthropic_endpoint_from(setting, BASE_URL_SETTING)
+}
+
+/// The Messages endpoint: the gateway in Settings → Claude, else the one in
+/// COUCOU_ANTHROPIC_BASE_URL, else Anthropic's. The gateway's host (never the
+/// key) goes to the log each time it changes.
+fn endpoint(setting: &str) -> Result<Url, String> {
+    static LOGGED: Mutex<Option<String>> = Mutex::new(None);
+    let (resolved, source) = if !setting.trim().is_empty() {
+        (setting_endpoint(setting), "Settings")
+    } else {
+        match std::env::var(BASE_URL_VAR).ok().filter(|v| !v.trim().is_empty()) {
+            Some(raw) => (net::anthropic_endpoint(&raw), BASE_URL_VAR),
+            None => (Ok(Url::parse(DEFAULT_ENDPOINT).expect("valid default endpoint")), ""),
+        }
+    };
+    let line = match &resolved {
+        Ok(url) if url.as_str() != DEFAULT_ENDPOINT => {
+            Some(format!("chat: Claude requests go to {} ({source})", net::host_for_log(url)))
+        }
+        Err(err) => Some(format!("chat: {err}")),
+        _ => None,
+    };
+    let mut logged = LOGGED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(line) = line {
+        if logged.as_deref() != Some(line.as_str()) {
+            crate::log::line(line.clone());
+            *logged = Some(line);
+        }
+    }
+    resolved
 }
 
 /// The model list endpoint next to the Messages one.
@@ -139,12 +154,13 @@ fn interpret(response: &Value) -> Result<(Vec<Value>, String), String> {
 /// in the note view.
 pub async fn send(
     chat: &Chat,
+    base_url: &str,
     model: &str,
     query: String,
     context: Option<ChatContext>,
 ) -> Result<ChatReply, String> {
     let key = secrets::get(KEY).ok_or_else(|| t("API key missing. Open settings."))?;
-    let endpoint = endpoint()?;
+    let endpoint = endpoint(base_url)?;
 
     let turn = chat.begin(chat::ANTHROPIC);
     let user = json!({ "role": "user", "content": user_content(turn.first, context.as_ref(), &query) });
@@ -160,11 +176,20 @@ pub async fn send(
     Ok(ChatReply { text })
 }
 
+/// Settings → Claude → Base URL, for what calls Claude without the chat's
+/// settings at hand (« OK Coucou », the dictation clean-up, the notes of a call).
+pub fn base_url(app: &tauri::AppHandle) -> String {
+    use tauri::Manager;
+    app.try_state::<crate::Shared>()
+        .map(|s| s.settings.lock().unwrap().anthropic_base_url.clone())
+        .unwrap_or_default()
+}
+
 /// One question, one answer, no history: the dictation clean-up and the notes
 /// of a call. The text of the answer, or why there is none.
-pub async fn complete(model: &str, system: &str, user: &str, max_tokens: u32, timeout: Duration) -> Result<String, String> {
+pub async fn complete(base_url: &str, model: &str, system: &str, user: &str, max_tokens: u32, timeout: Duration) -> Result<String, String> {
     let key = secrets::get(KEY).ok_or_else(|| t("API key missing. Open settings."))?;
-    let endpoint = endpoint()?;
+    let endpoint = endpoint(base_url)?;
     let body = json!({
         "model": model,
         "max_tokens": max_tokens,
@@ -184,9 +209,9 @@ pub async fn complete(model: &str, system: &str, user: &str, max_tokens: u32, ti
 
 /// One turn of « OK Coucou »'s conversation with tools: the API's whole answer
 /// (content blocks and stop_reason).
-pub async fn voice_turn(model: &str, system: &str, messages: &[Value], tools: &[Value]) -> Result<Value, String> {
+pub async fn voice_turn(base_url: &str, model: &str, system: &str, messages: &[Value], tools: &[Value]) -> Result<Value, String> {
     let key = secrets::get(KEY).ok_or_else(|| t("API key missing. Open settings."))?;
-    let endpoint = endpoint()?;
+    let endpoint = endpoint(base_url)?;
     let body = json!({
         "model": model,
         "max_tokens": 1024,
@@ -224,8 +249,8 @@ async fn call_with_timeout(endpoint: &Url, key: &str, body: &Value, timeout: Dur
 }
 
 /// The models on the user's Anthropic account, newest first, as the API lists them.
-pub async fn models(key: &str) -> Result<Vec<ModelInfo>, String> {
-    let url = models_endpoint(&endpoint()?);
+pub async fn models(key: &str, base_url: &str) -> Result<Vec<ModelInfo>, String> {
+    let url = models_endpoint(&endpoint(base_url)?);
     let response = net::client(&url, Duration::from_secs(10))?
         .get(url.clone())
         .header("x-api-key", key)

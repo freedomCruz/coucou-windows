@@ -19,12 +19,12 @@ pub fn has_key() -> bool {
     crate::secrets::present(crate::claude::KEY)
 }
 
-pub async fn clean(raw: &str, style: Style, app: Option<&str>, words: &[String]) -> String {
+pub async fn clean(base_url: &str, raw: &str, style: Style, app: Option<&str>, words: &[String]) -> String {
     if style == Style::Verbatim || text::word_count(raw) < 3 || !has_key() {
         return raw.to_string();
     }
     let user = format!("<dictation>\n{raw}\n</dictation>");
-    match crate::claude::complete(MODEL, &system(style, app, words), &user, 2048, TIMEOUT).await {
+    match crate::claude::complete(base_url, MODEL, &system(style, app, words), &user, 2048, TIMEOUT).await {
         Ok(reply) => {
             let cleaned = reply.replace("<dictation>", "").replace("</dictation>", "").trim().to_string();
             if plausible(&cleaned, raw) {

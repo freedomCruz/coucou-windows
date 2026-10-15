@@ -6,7 +6,7 @@ import { t } from "../../i18n/i18n";
 import { Bridge } from "../../core/bridge";
 import type { VoiceOutput } from "../../core/flow";
 import type { HubContext } from "../shell";
-import { button, card, divider, label, row, segmented, toggle } from "../ui";
+import { button, card, divider, label, row, segmented, select, toggle } from "../ui";
 import { modelsControl } from "./flowsettings";
 
 const ELEVEN = "elevenlabs-api-key";
@@ -40,6 +40,24 @@ function elevenKey(): HTMLElement {
   return box;
 }
 
+/**
+ * Which model answers: Claude Haiku unless another is picked. The list is the
+ * Claude endpoint's (Anthropic, or the gateway in Notch → Chat → Base URL), so a
+ * gateway's Gemini can answer too. A model picked earlier stays in the list.
+ */
+function voiceModel(ctx: HubContext, current: string): HTMLElement {
+  const box = h("div", { style: "display:flex;align-items:center;gap:8px" });
+  const draw = (ids: string[]) => {
+    const options: [string, string][] = [["", t("Claude Haiku (default)")]];
+    for (const id of current && !ids.includes(current) ? [current, ...ids] : ids) options.push([id, id]);
+    clear(box);
+    box.append(select(options, current, (v) => void ctx.setPrefs((p) => (p.voiceModel = v))));
+  };
+  draw([]);
+  void Bridge.chatModels("anthropic").then((models) => draw(models.map((m) => m.id)), () => {});
+  return box;
+}
+
 export async function voicePage(page: HTMLElement, ctx: HubContext) {
   const status = await ctx.refresh();
   const prefs = status.prefs;
@@ -57,6 +75,12 @@ export async function voicePage(page: HTMLElement, ctx: HubContext) {
     main.append(h("div", { class: "hub-warn", text: t("Coucou answers with Claude: add your Claude key in Notch → Chat.") }));
   } else if (prefs.voice && !ready) {
     main.append(h("div", { class: "hub-warn", text: t("Download the voice model so Coucou can hear you.") }));
+  }
+  if (status.hasClaudeKey) {
+    main.append(
+      divider(),
+      row(t("Model"), t("Who answers. Through a gateway (Notch → Chat → Base URL), any model it offers, Gemini included."), voiceModel(ctx, prefs.voiceModel ?? "")),
+    );
   }
   page.append(main);
 
