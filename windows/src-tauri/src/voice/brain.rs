@@ -43,6 +43,47 @@ fn models_to_try(chosen: &str, chat: &str) -> Vec<String> {
     models
 }
 
+/// The request of a search on its own: the question, and web_search as the one tool.
+fn search_request(query: &str) -> (Vec<Value>, Vec<Value>) {
+    let web = tools().into_iter().filter(|t| t["type"] == "web_search_20250305").collect();
+    (vec![json!({ "role": "user", "content": query })], web)
+}
+
+/// What to search for: the input's `query`, else the first text it carries
+/// (Gemini through a gateway does not always name the field).
+fn search_query(input: &Value) -> String {
+    let text = input["query"].as_str().or_else(|| input.as_object()?.values().find_map(Value::as_str));
+    text.unwrap_or("").trim().to_string()
+}
+
+/// The text of an answer, if it has any.
+fn answer_text(reply: &Value) -> Option<String> {
+    let text: String = reply["content"]
+        .as_array()?
+        .iter()
+        .filter(|b| b["type"] == "text")
+        .filter_map(|b| b["text"].as_str())
+        .collect();
+    (!text.trim().is_empty()).then_some(text)
+}
+
+/// A web search the gateway handed back, asked again alone: what it found, as
+/// the tool's result.
+async fn web_lookup(base_url: &str, model: &str, query: &str) -> String {
+    if query.trim().is_empty() {
+        return "No search query.".into();
+    }
+    let (messages, tools) = search_request(query);
+    let system = "Search the web and answer in a few sentences, with the facts found. No preamble.";
+    match crate::claude::voice_turn(base_url, model, system, &messages, &tools).await {
+        Ok(reply) => answer_text(&reply).unwrap_or_else(|| "The search found nothing.".into()),
+        Err(err) => {
+            crate::log::line(format!("voice: web search: {err}"));
+            "The web search failed.".into()
+        }
+    }
+}
+
 fn tools() -> Vec<Value> {
     vec![
         json!({
@@ -137,13 +178,18 @@ impl Brain {
         let base_url = crate::claude::base_url(app);
         let mut acted = false;
         let mut spoken = String::new();
+        // The model that answered last: a search handed back goes to it.
+        let mut answered = models[0].clone();
         for _ in 0..5 {
             let turn = tauri::async_runtime::block_on(async {
                 let mut last = Err(String::new());
                 for (i, model) in models.iter().enumerate() {
                     last = crate::claude::voice_turn(&base_url, model, &system, &self.messages, &tools).await;
                     match &last {
-                        Ok(_) => break,
+                        Ok(_) => {
+                            answered = model.clone();
+                            break;
+                        }
                         Err(err) if i + 1 < models.len() => crate::log::line(format!("voice: {err}; {} instead", models[i + 1])),
                         Err(_) => {}
                     }
@@ -176,7 +222,16 @@ impl Brain {
             }
             let mut results = Vec::new();
             for u in uses {
-                let (result, did) = super::run_tool(app, u["name"].as_str().unwrap_or(""), &u["input"]);
+                let name = u["name"].as_str().unwrap_or("");
+                let (result, did) = if name == "web_search" {
+                    // Anthropic runs web_search itself and never hands it back. A
+                    // gateway may (CLIProxyAPI with Gemini, next to other tools):
+                    // ask it again with the search alone, which it does run.
+                    let query = search_query(&u["input"]);
+                    (tauri::async_runtime::block_on(web_lookup(&base_url, &answered, &query)), false)
+                } else {
+                    super::run_tool(app, name, &u["input"])
+                };
                 acted |= did;
                 results.push(json!({ "type": "tool_result", "tool_use_id": u["id"], "content": result }));
             }
@@ -231,6 +286,40 @@ pub fn spoken_text(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_search_handed_back_by_a_gateway_is_asked_with_the_web_search_alone() {
+        // A gateway (CLIProxyAPI with Gemini) runs web_search itself only when it
+        // is the one tool sent: the search goes out again on its own.
+        let (messages, only) = search_request("tiempo hoy Bogota");
+        assert_eq!(messages, vec![json!({ "role": "user", "content": "tiempo hoy Bogota" })]);
+        assert_eq!(only.len(), 1);
+        assert_eq!(only[0]["type"], "web_search_20250305");
+        assert!(tools().contains(&only[0]), "the same web_search tool OK Coucou offers");
+    }
+
+    #[test]
+    fn the_search_s_words_are_its_query_or_whatever_text_it_carries() {
+        // Gemini, through a gateway, does not always name the field `query`.
+        assert_eq!(search_query(&json!({ "query": "tiempo hoy Bogota" })), "tiempo hoy Bogota");
+        assert_eq!(search_query(&json!({ "x": "tiempo hoy en Bogotá" })), "tiempo hoy en Bogotá");
+        assert_eq!(search_query(&json!({ "max": 3, "q": " noticias " })), "noticias");
+        assert_eq!(search_query(&json!({})), "");
+        assert_eq!(search_query(&json!("noticias")), "");
+    }
+
+    #[test]
+    fn a_search_s_answer_is_its_text_blocks() {
+        let reply = json!({ "content": [
+            { "type": "server_tool_use", "name": "web_search" },
+            { "type": "web_search_tool_result", "content": [] },
+            { "type": "text", "text": "Bogotá: 14 °C," },
+            { "type": "text", "text": " lluvias por la tarde." }
+        ]});
+        assert_eq!(answer_text(&reply).as_deref(), Some("Bogotá: 14 °C, lluvias por la tarde."));
+        assert_eq!(answer_text(&json!({ "content": [{ "type": "thinking" }] })), None);
+        assert_eq!(answer_text(&json!({})), None);
+    }
 
     #[test]
     fn the_models_tried_are_the_chosen_one_then_the_chat_s() {
