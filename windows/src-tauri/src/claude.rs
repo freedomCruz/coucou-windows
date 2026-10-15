@@ -274,11 +274,22 @@ fn parse_models(json: &Value) -> Vec<ModelInfo> {
         .into_iter()
         .flatten()
         .filter_map(|m| {
-            let id = m.get("id")?.as_str()?.to_string();
-            let label = m.get("display_name").and_then(Value::as_str).unwrap_or(&id).to_string();
-            Some(ModelInfo { id, label })
+            let id = m.get("id")?.as_str()?;
+            if let Some(real) = gateway_alias(id) {
+                return Some(ModelInfo { label: real.clone(), id: real });
+            }
+            let label = m.get("display_name").and_then(Value::as_str).unwrap_or(id).to_string();
+            Some(ModelInfo { id: id.to_string(), label })
         })
         .collect()
+}
+
+/// CLIProxyAPI's name for a model when asked in Anthropic's format:
+/// `claude-fable-5-dd-` and the model's own id backwards. Both answer; the
+/// real id is the one a person can read (and tell one account's from another's).
+fn gateway_alias(id: &str) -> Option<String> {
+    let rest = id.strip_prefix("claude-fable-5-dd-").filter(|r| !r.is_empty())?;
+    Some(rest.chars().rev().collect())
 }
 
 /// PDF → document block, image → image block, text/code → inline text.
@@ -435,6 +446,30 @@ mod tests {
             vec![
                 ModelInfo { id: "claude-opus-5".into(), label: "Claude Opus 5".into() },
                 ModelInfo { id: "claude-x".into(), label: "claude-x".into() },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_gateway_s_renamed_models_are_listed_under_their_own_name() {
+        // CLIProxyAPI, asked in Anthropic's format, lists every model as
+        // `claude-fable-5-dd-` + its id backwards; both names answer. The real
+        // one is kept and shown: five "Gemini 3 Flash" of five accounts would
+        // otherwise look the same.
+        let list = json!({"data":[
+            {"id":"claude-fable-5-dd-hsalf-3-inimeg/otneeva","display_name":"Gemini 3 Flash"},
+            {"id":"claude-fable-5-dd-hsalf-3-inimeg","display_name":"Gemini 3 Flash"},
+            {"id":"claude-fable-5-1","display_name":"Claude Fable 5.1"},
+            {"id":"claude-fable-5-dd-","display_name":"Odd"}
+        ]});
+        assert_eq!(
+            parse_models(&list),
+            vec![
+                ModelInfo { id: "aveento/gemini-3-flash".into(), label: "aveento/gemini-3-flash".into() },
+                ModelInfo { id: "gemini-3-flash".into(), label: "gemini-3-flash".into() },
+                // Anthropic's own ids are left alone.
+                ModelInfo { id: "claude-fable-5-1".into(), label: "Claude Fable 5.1".into() },
+                ModelInfo { id: "claude-fable-5-dd-".into(), label: "Odd".into() },
             ]
         );
     }

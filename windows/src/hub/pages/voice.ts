@@ -47,14 +47,15 @@ function elevenKey(): HTMLElement {
  */
 function voiceModel(ctx: HubContext, current: string): HTMLElement {
   const box = h("div", { style: "display:flex;align-items:center;gap:8px" });
-  const draw = (ids: string[]) => {
+  const draw = (models: { id: string; label: string }[]) => {
     const options: [string, string][] = [["", t("Claude Haiku (default)")]];
-    for (const id of current && !ids.includes(current) ? [current, ...ids] : ids) options.push([id, id]);
+    if (current && !models.some((m) => m.id === current)) options.push([current, current]);
+    for (const m of models) options.push([m.id, m.label]);
     clear(box);
     box.append(select(options, current, (v) => void ctx.setPrefs((p) => (p.voiceModel = v))));
   };
   draw([]);
-  void Bridge.chatModels("anthropic").then((models) => draw(models.map((m) => m.id)), () => {});
+  void Bridge.chatModels("anthropic").then(draw, () => {});
   return box;
 }
 
