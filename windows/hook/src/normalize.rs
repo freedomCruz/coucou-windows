@@ -135,6 +135,10 @@ const TOOL_NAMES: &[(&str, &str)] = &[
     ("write", "Write"),
     ("grep", "Grep"),
     ("glob", "Glob"),
+    // Pi's find and ls, OpenCode's list: only the code view's Read phase reads them.
+    ("find", "Glob"),
+    ("ls", "LS"),
+    ("list", "LS"),
 ];
 
 /// Their argument names, and Claude Code's (Pi: `path`; OpenCode: `filePath`,
@@ -146,9 +150,10 @@ const INPUT_ALIASES: &[(&str, &str)] = &[
     ("newString", "new_string"),
 ];
 
-/// An MCP server's own bash / edit / write / read (`mcp__<server>__<name>`),
+/// An MCP server's own bash / edit / write / read / grep / find / ls (`mcp__<server>__<name>`),
 /// for any agent, when its input has that tool's fields: a command for bash, a
-/// file path for the others (and edits or content for edit and write). An MCP
+/// file path for the others (and edits or content for edit and write), a
+/// pattern for grep and find, a path for ls. An MCP
 /// tool of the same name that means something else keeps its name.
 fn mcp_tool<'a>(tool: &'a str, input: Option<&Value>) -> Option<&'a str> {
     let rest = tool.strip_prefix("mcp__")?;
@@ -161,6 +166,8 @@ fn mcp_tool<'a>(tool: &'a str, input: Option<&Value>) -> Option<&'a str> {
         "edit" => file && (has("edits") || has("oldText") || has("old_string") || has("oldString")),
         "write" => file && has("content"),
         "read" => file,
+        "grep" | "find" => has("pattern"),
+        "ls" => has("path"),
         _ => false,
     };
     fits.then_some(name)
@@ -424,7 +431,6 @@ mod tests {
             ("mcp__db__read", json!({ "table": "users" })),
             ("mcp__shell__bash", json!({ "script": "ls" })),
             // Not one of the four.
-            ("mcp__custom-tools__grep", json!({ "pattern": "x", "path": "." })),
             ("mcp__custom-tools__mem_save", json!({ "title": "t" })),
             // Not an MCP name.
             ("custom__bash", json!({ "command": "ls" })),
@@ -434,5 +440,30 @@ mod tests {
             canonical_tool(&mut m);
             assert_eq!(m, before, "{tool}");
         }
+    }
+
+    #[test]
+    fn searching_and_listing_tools_count_as_reading() {
+        // Pi's grep / find / ls, and the same MCP tools: the code view's Read phase.
+        for (agent, tool, input, canonical) in [
+            ("pi", "grep", json!({ "pattern": "x", "path": "." }), "Grep"),
+            ("pi", "find", json!({ "pattern": "*.ts", "path": "." }), "Glob"),
+            ("pi", "ls", json!({ "path": "." }), "LS"),
+            ("", "mcp__custom-tools__grep", json!({ "pattern": "x", "path": "." }), "Grep"),
+            ("", "mcp__custom-tools__find", json!({ "pattern": "*.ts" }), "Glob"),
+            ("", "mcp__custom-tools__ls", json!({ "path": "." }), "LS"),
+        ] {
+            let mut m = obj(json!({ "tool_name": tool, "tool_input": input }));
+            if !agent.is_empty() {
+                m.insert("coucou_agent".into(), json!(agent));
+            }
+            canonical_tool(&mut m);
+            assert_eq!(m["tool_name"], canonical, "{agent} {tool}");
+        }
+        // An MCP grep without a pattern is someone else's tool.
+        let before = obj(json!({ "tool_name": "mcp__db__grep", "tool_input": { "table": "t" } }));
+        let mut m = before.clone();
+        canonical_tool(&mut m);
+        assert_eq!(m, before);
     }
 }
